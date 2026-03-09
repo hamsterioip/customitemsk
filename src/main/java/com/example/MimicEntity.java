@@ -176,6 +176,13 @@ public class MimicEntity extends PathfinderMob {
                 sl.addFreshEntity(headDrop);
             }
 
+            // Drop 1 netherite scrap (100% drop rate)
+            ItemEntity scrapDrop = new ItemEntity(sl,
+                    getX(), getY() + 0.5, getZ(),
+                    new ItemStack(Items.NETHERITE_SCRAP, 1));
+            scrapDrop.setDefaultPickUpDelay();
+            sl.addFreshEntity(scrapDrop);
+
             // Drop 5 XP bottles
             ItemEntity xpDrop = new ItemEntity(sl,
                     getX(), getY() + 0.5, getZ(),

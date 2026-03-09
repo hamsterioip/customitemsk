@@ -656,8 +656,8 @@ public class CustomItemsK implements ModInitializer {
                 if (!sl.getEntitiesOfClass(MimicEntity.class,
                         target.getBoundingBox().inflate(100.0)).isEmpty()) continue;
 
-                // ~1 in 10 chance per 5-second check → avg ~50s wait while conditions hold
-                if (sl.getRandom().nextInt(10) != 0) continue;
+                // ~2% chance per 5-second check
+                if (sl.getRandom().nextInt(50) != 0) continue;
 
                 boolean spawned = spawnMimic(sl, target, server);
                 if (spawned) MIMIC_COOLDOWNS.put(target.getUUID(), now);
