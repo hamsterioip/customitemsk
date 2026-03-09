@@ -30,7 +30,7 @@ jobs:
       - name: Publish to Modrinth
         uses: Kir-Antipov/mc-publish@v3.3
         with:
-          modrinth-id: customitemsk
+          modrinth-id: CebpedZK
           modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
           files: build/libs/!(*-sources|*-dev).jar
           name: CustomItemsK ${{ github.ref_name }}
