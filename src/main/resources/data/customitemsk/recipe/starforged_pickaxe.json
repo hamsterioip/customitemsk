@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "GDG",
+    "DSD",
+    "GDG"
+  ],
+  "key": {
+    "G": "minecraft:gold_block",
+    "D": "minecraft:diamond_block",
+    "S": "minecraft:stick"
+  },
+  "result": {
+    "id": "customitemsk:starforged_pickaxe",
+    "count": 1
+  }
+}

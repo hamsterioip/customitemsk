@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(''MC:'', d.get\\(''id'',''?''\\), ''inherits:'', d.get\\(''inheritsFrom'',''?''\\)\\)\")",
+      "Bash(python3 -c \":*)",
+      "Bash(xargs grep -l \"fabric-loader\")",
+      "Bash(cmd /c \"gradlew.bat build --info 2>&1\")",
+      "Bash(./gradlew.bat compileJava)",
+      "Bash(python3:*)",
+      "Bash(./gradlew.bat deployToModrinth)",
+      "Bash(./gradlew.bat clean deployToModrinth)",
+      "Bash(python -c \"from PIL import Image; print\\(''Pillow OK''\\)\")",
+      "Bash(cmd /c \"gradlew.bat clean deployToModrinth\")",
+      "Bash(gradlew.bat clean deployToModrinth)",
+      "Bash(powershell.exe -Command \"Set-Location ''C:\\\\Users\\\\Koon\\\\Downloads\\\\customitemsk-template-1.21.11''; .\\\\gradlew.bat clean deployToModrinth\")",
+      "Bash(powershell.exe -NoProfile -Command \".\\\\gradlew.bat deployToModrinth\")",
+      "Bash(\"src/main/resources/assets/customitemsk/lang/en_us.json\":*)",
+      "Bash(jar tf \"minecraft-clientonly-1.21.11-loom.mappings.1_21_11.layered+hash.2198-v2.jar\")",
+      "Bash(xargs -I{} python3 -c \"import zipfile, sys; [print\\(n\\) for n in zipfile.ZipFile\\(''{}''\\).namelist\\(\\) if ''Arrow'' in n and ''renderer'' in n.lower\\(\\) or ''state'' in n.lower\\(\\) and ''Arrow'' in n]\")",
+      "Bash(xargs -I{} python3 -c \" import zipfile, sys jar = ''{}'' with zipfile.ZipFile\\(jar\\) as z: with z.open\\(''net/minecraft/client/renderer/entity/ArrowRenderer.class''\\) as f: data = f.read\\(\\) # Extract string constants \\(class/method names\\) import re strings = re.findall\\(b''[\\\\x20-\\\\x7e]{4,}'', data\\) for s in strings: print\\(s.decode\\(''ascii'', errors=''ignore''\\)\\) \")",
+      "Bash(xargs -I{} python3 -c \" import zipfile with zipfile.ZipFile\\(''{}''\\) as z: matches = [n for n in z.namelist\\(\\) if ''UseAnim'' in n or ''ItemUseAnim'' in n or ''Animation'' in n.split\\(''/''\\)[-1]] for m in matches[:20]: print\\(m\\) \")",
+      "Bash(xargs -I{} python3 -c \" import zipfile with zipfile.ZipFile\\(''{}''\\) as z: matches = [n for n in z.namelist\\(\\) if \\(''UseAnim'' in n or ''ItemAnim'' in n or ''UseAnimation'' in n\\) and n.endswith\\(''.class''\\)] for m in matches[:20]: print\\(m\\) \" find \"c:/Users/Koon/.gradle\" -name \"minecraft-1.21.11*.jar\" -not -name \"*sources*\")",
+      "Bash(./gradlew compileJava)",
+      "Bash(jar tf \"C:/Users/Koon/.gradle/caches/modules-2/files-2.1/software.bernie.geckolib/geckolib-fabric-1.21.11/5.4.5/41cd2e142e48a8b6604d85764a6466fe5edb70c3/geckolib-fabric-1.21.11-5.4.5.jar\")",
+      "Bash(\"c:/Users/Koon/Downloads/customitemsk-template-1.21.11/src/main/resources/data/customitemsk/recipe/poison_ivy.json\":*)",
+      "Bash(\"c:/Users/Koon/Downloads/customitemsk-template-1.21.11/src/main/resources/data/customitemsk/recipe/kings_crown.json\":*)",
+      "Bash(./gradlew build)"
+    ]
+  }
+}

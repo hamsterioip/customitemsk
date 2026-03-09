@@ -1,0 +1,20 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "ESE",
+    "MCM",
+    "DGD"
+  ],
+  "key": {
+    "E": "minecraft:emerald",
+    "S": "minecraft:slime_ball",
+    "M": "minecraft:moss_block",
+    "C": "minecraft:crossbow",
+    "D": "minecraft:diamond",
+    "G": "minecraft:magma_cream"
+  },
+  "result": {
+    "id": "customitemsk:poison_ivy",
+    "count": 1
+  }
+}

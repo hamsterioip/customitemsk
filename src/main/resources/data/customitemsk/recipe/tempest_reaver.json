@@ -1,0 +1,20 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "ECE",
+    "WQL",
+    " S "
+  ],
+  "key": {
+    "E": "minecraft:ender_eye",
+    "C": "minecraft:wither_skeleton_skull",
+    "W": "customitemsk:blades_of_satan",
+    "L": "customitemsk:sword_of_light",
+    "Q": "minecraft:quartz_block",
+    "S": "minecraft:stick"
+  },
+  "result": {
+    "id": "customitemsk:tempest_reaver",
+    "count": 1
+  }
+}

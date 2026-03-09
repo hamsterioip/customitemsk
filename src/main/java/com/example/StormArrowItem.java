@@ -1,0 +1,19 @@
+package com.example;
+
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
+import net.minecraft.world.item.ArrowItem;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
+
+public class StormArrowItem extends ArrowItem {
+
+    public StormArrowItem(Properties props) {
+        super(props);
+    }
+
+    @Override
+    public AbstractArrow createArrow(Level level, ItemStack ammoStack, LivingEntity shooter, ItemStack weaponStack) {
+        return new StormArrowEntity(shooter, level, ammoStack, weaponStack);
+    }
+}

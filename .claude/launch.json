@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Build Mod",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "gradlew.bat", "build"],
+      "port": 0
+    },
+    {
+      "name": "Deploy to Modrinth Clienttest",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "gradlew.bat", "deployToModrinth"],
+      "port": 0
+    }
+  ]
+}

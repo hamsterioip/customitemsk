@@ -1,0 +1,19 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "INP",
+    " BN",
+    "T I"
+  ],
+  "key": {
+    "I": "minecraft:blue_ice",
+    "N": "minecraft:netherite_scrap",
+    "P": "minecraft:prismarine_shard",
+    "B": "minecraft:breeze_rod",
+    "T": "minecraft:stick"
+  },
+  "result": {
+    "id": "customitemsk:glacier_lance",
+    "count": 1
+  }
+}

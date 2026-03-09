@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    " N ",
+    "WNW",
+    " B "
+  ],
+  "key": {
+    "N": "minecraft:netherite_scrap",
+    "W": "minecraft:nether_wart",
+    "B": "minecraft:blaze_rod"
+  },
+  "result": {
+    "id": "customitemsk:blades_of_satan",
+    "count": 1
+  }
+}

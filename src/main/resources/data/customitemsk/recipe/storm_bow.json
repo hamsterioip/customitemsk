@@ -1,0 +1,19 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    " TN",
+    "BLS",
+    " TN"
+  ],
+  "key": {
+    "T": "minecraft:stick",
+    "N": "minecraft:netherite_scrap",
+    "B": "minecraft:bow",
+    "L": "minecraft:lightning_rod",
+    "S": "minecraft:string"
+  },
+  "result": {
+    "id": "customitemsk:storm_bow",
+    "count": 1
+  }
+}

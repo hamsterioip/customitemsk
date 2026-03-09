@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "ELE",
+    "LHL",
+    "ELE"
+  ],
+  "key": {
+    "E": "minecraft:emerald",
+    "L": "minecraft:lily_pad",
+    "H": "customitemsk:natures_heart"
+  },
+  "result": {
+    "id": "customitemsk:natures_guardian",
+    "count": 1
+  }
+}

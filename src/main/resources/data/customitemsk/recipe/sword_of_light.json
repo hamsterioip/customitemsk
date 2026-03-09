@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "PPP",
+    "PSP",
+    "PBP"
+  ],
+  "key": {
+    "P": "minecraft:paper",
+    "S": "minecraft:diamond_sword",
+    "B": "minecraft:book"
+  },
+  "result": {
+    "id": "customitemsk:sword_of_light",
+    "count": 1
+  }
+}
