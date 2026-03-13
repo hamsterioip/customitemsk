@@ -1,14 +1,16 @@
 {
   "type": "minecraft:crafting_shaped",
   "pattern": [
-    "GDG",
-    "DSD",
-    "GDG"
+    "ENE",
+    "GBD",
+    " B "
   ],
   "key": {
+    "E": "minecraft:end_crystal",
+    "N": "minecraft:netherite_scrap",
     "G": "minecraft:gold_block",
-    "D": "minecraft:diamond_block",
-    "S": "minecraft:stick"
+    "B": "minecraft:breeze_rod",
+    "D": "minecraft:diamond_block"
   },
   "result": {
     "id": "customitemsk:starforged_pickaxe",

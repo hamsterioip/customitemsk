@@ -16,7 +16,8 @@
 	"environment": "*",
 	"entrypoints": {
 		"main": [
-			"com.example.CustomItemsK"
+			"com.example.CustomItemsK",
+			"com.example.ConnectorMod"
 		],
 		"client": [
 			"com.example.CustomItemsKClient"

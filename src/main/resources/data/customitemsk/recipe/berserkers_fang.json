@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "FSF",
+    "SBS",
+    "FSF"
+  ],
+  "key": {
+    "F": "minecraft:flint",
+    "S": "minecraft:stick",
+    "B": "minecraft:bone"
+  },
+  "result": {
+    "id": "customitemsk:berserkers_fang",
+    "count": 1
+  }
+}

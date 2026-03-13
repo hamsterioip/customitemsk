@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "FBF",
+    "BTB",
+    "FBF"
+  ],
+  "key": {
+    "F": "minecraft:fire_charge",
+    "B": "minecraft:blaze_powder",
+    "T": "minecraft:totem_of_undying"
+  },
+  "result": {
+    "id": "customitemsk:phoenix_ember",
+    "count": 1
+  }
+}

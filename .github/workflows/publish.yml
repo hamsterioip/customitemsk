@@ -1,9 +1,12 @@
-name: Publish to Modrinth
+name: Publish to Modrinth & Auto-Update
 
 on:
   push:
     tags:
       - 'v*'
+
+permissions:
+  contents: write
 
 jobs:
   publish:
@@ -27,6 +30,15 @@ jobs:
       - name: Build mod
         run: ./gradlew build
 
+      - name: Get JAR filename
+        id: get_jar
+        run: |
+          JAR_FILE=$(ls build/libs/*.jar | grep -v sources | grep -v dev | head -n 1)
+          JAR_NAME=$(basename "$JAR_FILE")
+          echo "jar_path=$JAR_FILE" >> $GITHUB_OUTPUT
+          echo "jar_name=$JAR_NAME" >> $GITHUB_OUTPUT
+          echo "Found JAR: $JAR_NAME"
+
       - name: Publish to Modrinth
         uses: Kir-Antipov/mc-publish@v3.3
         with:
@@ -40,3 +52,48 @@ jobs:
           game-versions: 1.21.11
           dependencies: |
             fabric-api | required
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: build/libs/!(*-sources|*-dev).jar
+          name: CustomItemsK ${{ github.ref_name }}
+          body: |
+            ## CustomItemsK ${{ github.ref_name }}
+            
+            ### Installation
+            1. Download `customitemsk.jar` below
+            2. Place it in your `mods` folder
+            3. Restart Minecraft
+            
+            ### What's New
+            See commit history for changes.
+            
+            ### Auto-Update
+            If you have the connector installed, restart Minecraft to get the update automatically!
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update version.json
+        run: |
+          VERSION="${{ github.ref_name }}"
+          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/customitemsk.jar"
+          
+          cat > version.json << EOF
+          {
+            "version": "$VERSION",
+            "downloadUrl": "$DOWNLOAD_URL",
+            "lastUpdated": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+            "changelog": "https://github.com/${{ github.repository }}/releases/tag/$VERSION"
+          }
+          EOF
+          
+          echo "Updated version.json:"
+          cat version.json
+
+      - name: Commit and push version.json
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add version.json
+          git diff --staged --quiet || (git commit -m "Update version.json to ${{ github.ref_name }}" && git push)

@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "ETE",
+    "TCT",
+    "ETE"
+  ],
+  "key": {
+    "E": "customitemsk:phoenix_ember",
+    "T": "customitemsk:tempest_reaver",
+    "C": "minecraft:conduit"
+  },
+  "result": {
+    "id": "customitemsk:tempest_crown",
+    "count": 1
+  }
+}

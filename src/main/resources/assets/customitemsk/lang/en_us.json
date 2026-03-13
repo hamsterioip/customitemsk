@@ -11,5 +11,8 @@
   "item.customitemsk.tempest_reaver": "Tempest Reaver",
   "item.customitemsk.poison_ivy": "Poison Ivy",
 "item.customitemsk.kings_crown": "King's Crown",
-  "item.customitemsk.natures_heart": "Nature's Heart"
+  "item.customitemsk.natures_heart": "Nature's Heart",
+  "item.customitemsk.sentinels_charm": "Sentinel's Charm",
+  "item.customitemsk.berserkers_fang": "Berserker's Fang",
+  "entity.customitemsk.watcher": "The Watcher"
 }

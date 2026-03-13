@@ -1,11 +1,23 @@
 package com.example;
 
+import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.fabricmc.fabric.api.event.player.UseItemCallback;
+import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.object.builder.v1.entity.FabricDefaultAttributeRegistry;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.Commands;
+import net.minecraft.commands.arguments.EntityArgument;
+import net.minecraft.world.SimpleMenuProvider;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Registry;
 import net.minecraft.core.component.DataComponents;
@@ -90,6 +102,47 @@ public class CustomItemsK implements ModInitializer {
                         .build(mimicKey));
         FabricDefaultAttributeRegistry.register(MimicEntity.TYPE, MimicEntity.createAttributes().build());
 
+        ResourceKey<EntityType<?>> watcherKey = ResourceKey.create(
+                Registries.ENTITY_TYPE,
+                Identifier.fromNamespaceAndPath(MOD_ID, "watcher"));
+        WatcherEntity.TYPE = Registry.register(
+                BuiltInRegistries.ENTITY_TYPE,
+                watcherKey,
+                EntityType.Builder.<WatcherEntity>of(WatcherEntity::new, MobCategory.MONSTER)
+                        .sized(0.6f, 1.8f)
+                        .clientTrackingRange(64)
+                        .build(watcherKey));
+        FabricDefaultAttributeRegistry.register(WatcherEntity.TYPE, WatcherEntity.createAttributes().build());
+
+        // Register Stalker entity
+        ResourceKey<EntityType<?>> stalkerKey = ResourceKey.create(
+                Registries.ENTITY_TYPE,
+                Identifier.fromNamespaceAndPath(MOD_ID, "stalker"));
+        StalkerEntity.TYPE = Registry.register(
+                BuiltInRegistries.ENTITY_TYPE,
+                stalkerKey,
+                EntityType.Builder.<StalkerEntity>of(StalkerEntity::new, MobCategory.MONSTER)
+                        .sized(0.6f, 1.8f)
+                        .clientTrackingRange(32)
+                        .build(stalkerKey));
+        FabricDefaultAttributeRegistry.register(StalkerEntity.TYPE, StalkerEntity.createAttributes().build());
+
+        // Register Changeling entity
+        ResourceKey<EntityType<?>> changelingKey = ResourceKey.create(
+                Registries.ENTITY_TYPE,
+                Identifier.fromNamespaceAndPath(MOD_ID, "changeling"));
+        ChangelingEntity.TYPE = Registry.register(
+                BuiltInRegistries.ENTITY_TYPE,
+                changelingKey,
+                EntityType.Builder.<ChangelingEntity>of(ChangelingEntity::new, MobCategory.MONSTER)
+                        .sized(0.9f, 1.4f) // Similar to cow size
+                        .clientTrackingRange(32)
+                        .build(changelingKey));
+        FabricDefaultAttributeRegistry.register(ChangelingEntity.TYPE, ChangelingEntity.createAttributes().build());
+
+        // Register the jumpscare packet for server → client delivery
+        PayloadTypeRegistry.playS2C().register(WatcherJumpscarePacket.ID, WatcherJumpscarePacket.CODEC);
+
         ModItems.registerItems();
         registerStormBowEvents();
         registerPoisonIvyEvents();
@@ -98,6 +151,85 @@ public class CustomItemsK implements ModInitializer {
         registerForestSpiritEvents();
         registerMimicEvents();
         registerPlayerHeadEvents();
+        registerCombatLogEvents();
+        registerBerserkersFangEvents();
+        registerWatcherEvents();
+        registerStalkerEvents();
+        registerChangelingEvents();
+        registerTeleportCommands();
+
+        // /spawnmimic <target> <skin> — operator command to manually spawn a mimic
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+            dispatcher.register(
+                Commands.literal("spawnmimic")
+                    .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                    .then(Commands.argument("target", EntityArgument.player())
+                        .then(Commands.argument("skin", EntityArgument.player())
+                            .executes(ctx -> {
+                                ServerPlayer target = EntityArgument.getPlayer(ctx, "target");
+                                ServerPlayer skin   = EntityArgument.getPlayer(ctx, "skin");
+                                ServerLevel sl = (ServerLevel) target.level();
+                                BlockPos spawnPos = findSafeMimicPos(sl, target);
+                                if (spawnPos == null) {
+                                    ctx.getSource().sendFailure(Component.literal("No safe spawn position found near " + target.getName().getString()));
+                                    return 0;
+                                }
+                                MimicEntity mimic = new MimicEntity(MimicEntity.TYPE, sl);
+                                mimic.setPos(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
+                                mimic.setStolenFrom(skin);
+                                sl.addFreshEntity(mimic);
+                                ctx.getSource().sendSuccess(() -> Component.literal(
+                                    "§aSpawned Mimic near §f" + target.getName().getString() +
+                                    "§a wearing §f" + skin.getName().getString() + "§a's skin."), true);
+                                return 1;
+                            })))
+            )
+        );
+
+        // /spawnwatcher <target> [stage] — operator command to manually spawn The Watcher
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+            dispatcher.register(
+                Commands.literal("spawnwatcher")
+                    .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                    .then(Commands.argument("target", EntityArgument.player())
+                        // Without stage: defaults to stage 1
+                        .executes(ctx -> spawnWatcherCommand(ctx, 1))
+                        // With stage: /spawnwatcher <target> <stage 1-5>
+                        .then(Commands.argument("stage", IntegerArgumentType.integer(1, 5))
+                            .executes(ctx -> spawnWatcherCommand(ctx,
+                                    IntegerArgumentType.getInteger(ctx, "stage")))))
+            )
+        );
+
+        // /viewinv <player> — OP command to view and manage a player's inventory
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+            dispatcher.register(
+                Commands.literal("viewinv")
+                    .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                    .then(Commands.argument("player", EntityArgument.player())
+                        .executes(ctx -> {
+                            if (!(ctx.getSource().getEntity() instanceof ServerPlayer viewer)) {
+                                ctx.getSource().sendFailure(Component.literal("Only players can use this command."));
+                                return 0;
+                            }
+                            ServerPlayer target = EntityArgument.getPlayer(ctx, "player");
+                            viewer.openMenu(new SimpleMenuProvider(
+                                (id, viewerInv, p) -> new ViewInventoryMenu(id, viewerInv, target.getInventory()),
+                                Component.literal("§9" + target.getName().getString() + "'s Inventory")
+                            ));
+                            return 1;
+                        }))
+            )
+        );
+
+        // Block single player: kick any player who joins a non-dedicated server
+        ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
+            if (!server.isDedicatedServer()) {
+                handler.disconnect(Component.literal(
+                        "§cCustomItemsK requires a multiplayer server. Single player is not supported."));
+            }
+        });
+
         LOGGER.info("CustomItemsK loaded!");
     }
 
@@ -656,8 +788,8 @@ public class CustomItemsK implements ModInitializer {
                 if (!sl.getEntitiesOfClass(MimicEntity.class,
                         target.getBoundingBox().inflate(100.0)).isEmpty()) continue;
 
-                // ~2% chance per 5-second check
-                if (sl.getRandom().nextInt(50) != 0) continue;
+                // ~0.5% chance per 5-second check
+                if (sl.getRandom().nextInt(200) != 0) continue;
 
                 boolean spawned = spawnMimic(sl, target, server);
                 if (spawned) MIMIC_COOLDOWNS.put(target.getUUID(), now);
@@ -721,6 +853,54 @@ public class CustomItemsK implements ModInitializer {
         return null;
     }
 
+    // --- Combat log ---
+    private static final Map<UUID, Long> COMBAT_TIMESTAMPS = new ConcurrentHashMap<>();
+    private static final long COMBAT_DURATION_TICKS = 300L; // 15 seconds
+
+    private void registerCombatLogEvents() {
+        // Mark combat when a player takes damage or deals damage to something
+        ServerLivingEntityEvents.ALLOW_DAMAGE.register((entity, source, amount) -> {
+            // Only trigger for player-vs-player combat
+            if (!(entity instanceof ServerPlayer victim)) return true;
+            if (!(source.getEntity() instanceof ServerPlayer attacker)) return true;
+            if (!(entity.level() instanceof ServerLevel sl)) return true;
+            long now = sl.getServer().getTickCount();
+            COMBAT_TIMESTAMPS.put(victim.getUUID(), now);
+            COMBAT_TIMESTAMPS.put(attacker.getUUID(), now);
+            return true;
+        });
+
+        // Kill player if they disconnect while in combat
+        ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
+            ServerPlayer sp = handler.getPlayer();
+            Long last = COMBAT_TIMESTAMPS.remove(sp.getUUID());
+            if (last == null) return;
+            if (server.getTickCount() - last < COMBAT_DURATION_TICKS) {
+                sp.kill((ServerLevel) sp.level());
+            }
+        });
+
+        // Action-bar countdown ticker
+        ServerTickEvents.END_SERVER_TICK.register(server -> {
+            if (COMBAT_TIMESTAMPS.isEmpty()) return;
+            long now = server.getTickCount();
+            for (ServerPlayer sp : server.getPlayerList().getPlayers()) {
+                Long last = COMBAT_TIMESTAMPS.get(sp.getUUID());
+                if (last == null) continue;
+                long elapsed = now - last;
+                if (elapsed >= COMBAT_DURATION_TICKS) {
+                    COMBAT_TIMESTAMPS.remove(sp.getUUID());
+                } else {
+                    long secs = (COMBAT_DURATION_TICKS - elapsed + 19) / 20;
+                    sp.displayClientMessage(
+                        Component.literal("§c⚔ Combat §7| §f" + secs + "s"),
+                        true
+                    );
+                }
+            }
+        });
+    }
+
     /** Finds a safe teleport position within 5–30 blocks of the player. */
     private static BlockPos findHeadTeleportPos(ServerLevel level, Player player) {
         for (int attempt = 0; attempt < 20; attempt++) {
@@ -739,6 +919,701 @@ public class CustomItemsK implements ModInitializer {
                         && (level.getBlockState(head).isAir() || level.getBlockState(head).is(BlockTags.REPLACEABLE))
                         && !level.getBlockState(feet).is(BlockTags.LEAVES)
                         && !level.getBlockState(head).is(BlockTags.LEAVES)) {
+                    return feet;
+                }
+            }
+        }
+        return null;
+    }
+
+    // --- Watcher ---
+    private static final Map<UUID, Long> WATCHER_COOLDOWNS  = new ConcurrentHashMap<>();
+    private static final Map<UUID, Integer> WATCHER_ENCOUNTERS = new ConcurrentHashMap<>();
+    private static final long WATCHER_COOLDOWN_TICKS = 12000L; // 10 minutes between spawns per player
+
+    /**
+     * The Watcher — spawns at night in forest biomes when the player is alone.
+     * Prefers elevated positions with line-of-sight to the player.
+     * ~1% chance per 5-second server tick check.
+     */
+    private void registerWatcherEvents() {
+        ServerTickEvents.END_SERVER_TICK.register(server -> {
+            if (server.getTickCount() % 100 != 0) return; // every 5 seconds
+
+            for (ServerPlayer target : server.getPlayerList().getPlayers()) {
+                if (!(target.level() instanceof ServerLevel sl)) continue;
+
+                // Nighttime only
+                long dayTime = sl.getDayTime() % 24000;
+                if (dayTime < 13000 || dayTime > 23500) continue;
+
+                // Forest/jungle/taiga biome only
+                var biome = sl.getBiome(target.blockPosition());
+                if (!biome.is(BiomeTags.IS_FOREST)
+                        && !biome.is(BiomeTags.IS_JUNGLE)
+                        && !biome.is(BiomeTags.IS_TAIGA)) continue;
+
+                // Player must be alone — no other players within 60 blocks
+                boolean isAlone = server.getPlayerList().getPlayers().stream()
+                        .filter(p -> p != target)
+                        .allMatch(p -> p.distanceToSqr(target) > 60.0 * 60.0);
+                if (!isAlone) continue;
+
+                // Per-player cooldown
+                long now = sl.getGameTime();
+                Long lastSpawn = WATCHER_COOLDOWNS.get(target.getUUID());
+                if (lastSpawn != null && now - lastSpawn < WATCHER_COOLDOWN_TICKS) continue;
+
+                // No Watcher already nearby
+                if (!sl.getEntitiesOfClass(WatcherEntity.class,
+                        target.getBoundingBox().inflate(80.0)).isEmpty()) continue;
+
+                // ~1% chance per check
+                if (sl.getRandom().nextInt(100) != 0) continue;
+
+                BlockPos spawnPos = findWatcherPos(sl, target);
+                if (spawnPos == null) continue;
+
+                // Track encounters and set stage
+                int encounters = WATCHER_ENCOUNTERS.getOrDefault(target.getUUID(), 0);
+                WATCHER_ENCOUNTERS.put(target.getUUID(), encounters + 1);
+                int autoStage = Math.min(encounters + 1, 5);
+
+                WatcherEntity watcher = new WatcherEntity(WatcherEntity.TYPE, sl);
+                watcher.setPos(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
+                watcher.stage = autoStage;
+                watcher.targetPlayerUUID = target.getUUID();
+                sl.addFreshEntity(watcher);
+                WATCHER_COOLDOWNS.put(target.getUUID(), now);
+            }
+        });
+    }
+
+    /** Shared logic for /spawnwatcher — spawns a watcher at the given stage near the target. */
+    private static int spawnWatcherCommand(CommandContext<CommandSourceStack> ctx, int stage)
+            throws CommandSyntaxException {
+        ServerPlayer target = EntityArgument.getPlayer(ctx, "target");
+        ServerLevel sl = (ServerLevel) target.level();
+        BlockPos spawnPos = findWatcherPos(sl, target);
+        if (spawnPos == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "No safe spawn position found near " + target.getName().getString()));
+            return 0;
+        }
+        WatcherEntity watcher = new WatcherEntity(WatcherEntity.TYPE, sl);
+        watcher.setPos(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
+        watcher.stage = stage;
+        watcher.targetPlayerUUID = target.getUUID();
+        sl.addFreshEntity(watcher);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "§8Spawned The Watcher §7(stage " + stage + ")§8 near §f"
+                        + target.getName().getString()), true);
+        return 1;
+    }
+
+    /**
+     * Finds a spawn position for The Watcher:
+     *
+     * Pass 1 — In the player's field of view (±65°), elevated, in the OPEN (no trees
+     *           directly adjacent), with clear line of sight to the player.
+     * Pass 2 — Relax to ±80° and allow nearby tree canopy, still line of sight.
+     * Pass 3 — Any valid elevated position (fallback, no direction constraint).
+     */
+    private static BlockPos findWatcherPos(ServerLevel level, ServerPlayer player) {
+        int playerY = (int) player.getY();
+
+        // Horizontal look direction (normalised)
+        Vec3 look = player.getLookAngle();
+        double hLen = Math.sqrt(look.x * look.x + look.z * look.z);
+        double lookX = hLen > 0.001 ? look.x / hLen : 0;
+        double lookZ = hLen > 0.001 ? look.z / hLen : 1;
+
+        // --- Pass 1: within ±65° of player's gaze, open area, line of sight ---
+        for (int attempt = 0; attempt < 35; attempt++) {
+            double angleOffset = (level.getRandom().nextDouble() - 0.5) * Math.toRadians(130);
+            double[] dir = rotateHorizontal(lookX, lookZ, angleOffset);
+            double dist  = 18 + level.getRandom().nextDouble() * 12;
+            int tx = (int) Math.floor(player.getX() + dir[0] * dist);
+            int tz = (int) Math.floor(player.getZ() + dir[1] * dist);
+
+            for (int ty = playerY + 8; ty >= playerY - 3; ty--) {
+                BlockPos feet = new BlockPos(tx, ty + 1, tz);
+                if (!isClearStand(level, tx, ty, tz)) continue;
+                if (isInsideOrAdjacentToTree(level, feet)) continue;
+                if (hasLineOfSight(level, player.getEyePosition(),
+                        new Vec3(tx + 0.5, ty + 1.62, tz + 0.5))) {
+                    return feet;
+                }
+            }
+        }
+
+        // --- Pass 2: ±80°, trees nearby allowed, still line of sight ---
+        for (int attempt = 0; attempt < 25; attempt++) {
+            double angleOffset = (level.getRandom().nextDouble() - 0.5) * Math.toRadians(160);
+            double[] dir = rotateHorizontal(lookX, lookZ, angleOffset);
+            double dist  = 18 + level.getRandom().nextDouble() * 12;
+            int tx = (int) Math.floor(player.getX() + dir[0] * dist);
+            int tz = (int) Math.floor(player.getZ() + dir[1] * dist);
+
+            for (int ty = playerY + 8; ty >= playerY - 5; ty--) {
+                BlockPos feet = new BlockPos(tx, ty + 1, tz);
+                if (!isClearStand(level, tx, ty, tz)) continue;
+                if (hasLineOfSight(level, player.getEyePosition(),
+                        new Vec3(tx + 0.5, ty + 1.62, tz + 0.5))) {
+                    return feet;
+                }
+            }
+        }
+
+        // --- Pass 3: any valid elevated position (no directional constraint) ---
+        for (int attempt = 0; attempt < 20; attempt++) {
+            double angle = level.getRandom().nextDouble() * Math.PI * 2;
+            double dist  = 18 + level.getRandom().nextDouble() * 12;
+            int tx = (int) Math.floor(player.getX() + Math.cos(angle) * dist);
+            int tz = (int) Math.floor(player.getZ() + Math.sin(angle) * dist);
+
+            for (int ty = playerY + 8; ty >= playerY - 5; ty--) {
+                if (!isClearStand(level, tx, ty, tz)) continue;
+                if (ty + 1 >= playerY) return new BlockPos(tx, ty + 1, tz);
+            }
+        }
+        return null;
+    }
+
+    /** Rotates the 2D horizontal vector (x, z) by the given angle (radians). */
+    private static double[] rotateHorizontal(double x, double z, double angle) {
+        double cos = Math.cos(angle), sin = Math.sin(angle);
+        return new double[]{ x * cos - z * sin, x * sin + z * cos };
+    }
+
+    /** Returns true if the position at (tx, ty, tz) has a solid floor and 2 clear blocks above. */
+    private static boolean isClearStand(ServerLevel level, int tx, int ty, int tz) {
+        BlockPos floor = new BlockPos(tx, ty,     tz);
+        BlockPos feet  = new BlockPos(tx, ty + 1, tz);
+        BlockPos head  = new BlockPos(tx, ty + 2, tz);
+        if (!level.getBlockState(floor).isSolid()) return false;
+        if (!level.getBlockState(feet).isAir() && !level.getBlockState(feet).is(BlockTags.REPLACEABLE)) return false;
+        if (!level.getBlockState(head).isAir() && !level.getBlockState(head).is(BlockTags.REPLACEABLE)) return false;
+        if (level.getBlockState(feet).is(BlockTags.LEAVES)) return false;
+        if (level.getBlockState(head).is(BlockTags.LEAVES)) return false;
+        return true;
+    }
+
+    /**
+     * Returns true if the position is directly adjacent to (or inside) tree foliage/logs.
+     * Prevents the Watcher from spawning hidden behind or inside a tree.
+     */
+    private static boolean isInsideOrAdjacentToTree(ServerLevel level, BlockPos feet) {
+        for (BlockPos adj : new BlockPos[]{
+                feet, feet.above(),
+                feet.north(), feet.south(), feet.east(), feet.west(),
+                feet.north().east(), feet.north().west(),
+                feet.south().east(), feet.south().west()}) {
+            if (level.getBlockState(adj).is(BlockTags.LOGS)
+             || level.getBlockState(adj).is(BlockTags.LEAVES)) return true;
+        }
+        return false;
+    }
+
+    /** True if no solid block obstructs the straight line from {@code from} to {@code to}. */
+    private static boolean hasLineOfSight(ServerLevel level, Vec3 from, Vec3 to) {
+        ClipContext ctx = new ClipContext(from, to,
+                ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE,
+                net.minecraft.world.phys.shapes.CollisionContext.empty());
+        return level.clip(ctx).getType() == HitResult.Type.MISS;
+    }
+
+    /**
+     * Berserker's Fang — Blood Rush:
+     * When a player kills a mob while holding the fang, grant Speed I + Strength I for 4 seconds.
+     */
+    private void registerBerserkersFangEvents() {
+        ServerLivingEntityEvents.AFTER_DAMAGE.register((entity, source, baseDamage, damage, killed) -> {
+            if (!killed) return;
+            if (!(source.getEntity() instanceof Player player)) return;
+            ItemStack held = player.getMainHandItem();
+            if (!(held.getItem() instanceof BerserkersFangItem)) return;
+            if (!(player.level() instanceof ServerLevel sl)) return;
+
+            // Blood Rush: Speed I + Strength I for 4 seconds (80 ticks)
+            player.addEffect(new MobEffectInstance(MobEffects.SPEED,    80, 0, false, true));
+            player.addEffect(new MobEffectInstance(MobEffects.STRENGTH, 80, 0, false, true));
+
+            player.displayClientMessage(Component.literal("§c🩸 Blood Rush!"), true);
+
+            // Red burst particles at kill location
+            sl.sendParticles(ParticleTypes.CRIT,
+                    entity.getX(), entity.getY() + entity.getBbHeight() * 0.5, entity.getZ(),
+                    24, 0.6, 0.8, 0.6, 0.6);
+            sl.playSound(null, entity.getX(), entity.getY(), entity.getZ(),
+                    SoundEvents.PLAYER_ATTACK_CRIT, SoundSource.PLAYERS, 1.0f, 0.6f);
+        });
+    }
+
+    // --- Stalker ---
+    private static final Map<UUID, Long> STALKER_COOLDOWNS = new ConcurrentHashMap<>();
+    private static final long STALKER_COOLDOWN_TICKS = 8000L; // ~6.5 minutes between spawns per player
+
+    /**
+     * The Stalker — spawns in dark caves and at night in dark areas.
+     * Hunts players from shadows, invisible until it attacks.
+     * ~0.5% chance per 5-second server tick check in valid conditions.
+     */
+    private void registerStalkerEvents() {
+        ServerTickEvents.END_SERVER_TICK.register(server -> {
+            if (server.getTickCount() % 100 != 0) return; // every 5 seconds
+
+            for (ServerPlayer target : server.getPlayerList().getPlayers()) {
+                if (!(target.level() instanceof ServerLevel sl)) continue;
+
+                // Check if player is in darkness (light level 0-6)
+                int lightLevel = sl.getMaxLocalRawBrightness(target.blockPosition());
+                if (lightLevel > 6) continue;
+
+                // Must be relatively alone - no other players within 30 blocks
+                boolean isAlone = server.getPlayerList().getPlayers().stream()
+                        .filter(p -> p != target)
+                        .allMatch(p -> p.distanceToSqr(target) > 30.0 * 30.0);
+                if (!isAlone) continue;
+
+                // Per-player cooldown
+                long now = sl.getGameTime();
+                Long lastSpawn = STALKER_COOLDOWNS.get(target.getUUID());
+                if (lastSpawn != null && now - lastSpawn < STALKER_COOLDOWN_TICKS) continue;
+
+                // No Stalker already nearby
+                if (!sl.getEntitiesOfClass(StalkerEntity.class,
+                        target.getBoundingBox().inflate(50.0)).isEmpty()) continue;
+
+                // ~0.5% chance per check
+                if (sl.getRandom().nextInt(200) != 0) continue;
+
+                BlockPos spawnPos = findStalkerPos(sl, target);
+                if (spawnPos == null) continue;
+
+                StalkerEntity stalker = new StalkerEntity(StalkerEntity.TYPE, sl);
+                stalker.setPos(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
+                stalker.setInvisible(true); // Start invisible
+                sl.addFreshEntity(stalker);
+                STALKER_COOLDOWNS.put(target.getUUID(), now);
+                
+                // Subtle hint to the player
+                target.displayClientMessage(Component.literal("§8§o...you feel a cold presence..."), true);
+            }
+        });
+        
+        // /spawnstalker <target> — operator command to manually spawn a stalker
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+            dispatcher.register(
+                Commands.literal("spawnstalker")
+                    .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                    .then(Commands.argument("target", EntityArgument.player())
+                        .executes(ctx -> {
+                            ServerPlayer target = EntityArgument.getPlayer(ctx, "target");
+                            ServerLevel sl = (ServerLevel) target.level();
+                            BlockPos spawnPos = findStalkerPos(sl, target);
+                            if (spawnPos == null) {
+                                ctx.getSource().sendFailure(Component.literal(
+                                        "No safe spawn position found near " + target.getName().getString()));
+                                return 0;
+                            }
+                            StalkerEntity stalker = new StalkerEntity(StalkerEntity.TYPE, sl);
+                            stalker.setPos(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
+                            stalker.setInvisible(true);
+                            sl.addFreshEntity(stalker);
+                            ctx.getSource().sendSuccess(() -> Component.literal(
+                                    "§0Spawned §8The Stalker §0near §7" + target.getName().getString()), true);
+                            return 1;
+                        }))
+            )
+        );
+    }
+
+    /** Finds a dark spawn position for The Stalker near the player. */
+    private static BlockPos findStalkerPos(ServerLevel level, ServerPlayer player) {
+        for (int attempt = 0; attempt < 30; attempt++) {
+            double angle = level.getRandom().nextDouble() * Math.PI * 2;
+            double dist = 8 + level.getRandom().nextDouble() * 12; // 8-20 blocks away
+            int tx = (int) Math.floor(player.getX() + Math.cos(angle) * dist);
+            int tz = (int) Math.floor(player.getZ() + Math.sin(angle) * dist);
+
+            // Scan vertically for a valid dark spot
+            for (int ty = (int) player.getY() + 8; ty >= (int) player.getY() - 8; ty--) {
+                BlockPos floor = new BlockPos(tx, ty, tz);
+                BlockPos feet = new BlockPos(tx, ty + 1, tz);
+                BlockPos head = new BlockPos(tx, ty + 2, tz);
+
+                if (!level.getBlockState(floor).isSolid()) continue;
+                if (!level.getBlockState(feet).isAir() && !level.getBlockState(feet).is(BlockTags.REPLACEABLE)) continue;
+                if (!level.getBlockState(head).isAir() && !level.getBlockState(head).is(BlockTags.REPLACEABLE)) continue;
+                if (level.getBlockState(feet).is(BlockTags.LEAVES)) continue;
+                if (level.getBlockState(head).is(BlockTags.LEAVES)) continue;
+                
+                // Check light level - must be dark
+                int light = level.getMaxLocalRawBrightness(feet);
+                if (light <= 6) {
+                    return feet;
+                }
+            }
+        }
+        return null;
+    }
+
+    // =========================================================================
+    // TELEPORT COMMANDS - /sethome, /home, /tpa, /tpaccept, /tpdeny
+    // =========================================================================
+
+    // Home storage: Player UUID -> BlockPos
+    private static final Map<UUID, BlockPos> PLAYER_HOMES = new ConcurrentHashMap<>();
+    private static final Map<UUID, String> PLAYER_HOME_DIMENSIONS = new ConcurrentHashMap<>();
+
+    // TPA requests: Target UUID -> Requester UUID
+    private static final Map<UUID, UUID> TPA_REQUESTS = new ConcurrentHashMap<>();
+    private static final Map<UUID, Long> TPA_REQUEST_TIMES = new ConcurrentHashMap<>();
+    private static final long TPA_TIMEOUT_TICKS = 1200; // 60 seconds
+
+    private void registerTeleportCommands() {
+        // /sethome - Set your home location
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+            dispatcher.register(
+                Commands.literal("sethome")
+                    .executes(ctx -> {
+                        if (!(ctx.getSource().getEntity() instanceof ServerPlayer player)) {
+                            ctx.getSource().sendFailure(Component.literal("Only players can use this command!"));
+                            return 0;
+                        }
+                        
+                        ServerLevel level = (ServerLevel) player.level();
+                        BlockPos pos = player.blockPosition();
+                        String dimension = level.dimension().toString();
+                        
+                        PLAYER_HOMES.put(player.getUUID(), pos);
+                        PLAYER_HOME_DIMENSIONS.put(player.getUUID(), dimension);
+                        
+                        ctx.getSource().sendSuccess(() -> Component.literal(
+                                "§a✦ Home set at §f[" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + "] §7in §f" + dimension),
+                                false);
+                        
+                        // Particle effect
+                        level.sendParticles(ParticleTypes.HAPPY_VILLAGER,
+                                player.getX(), player.getY() + 1, player.getZ(),
+                                20, 0.5, 0.5, 0.5, 0.1);
+                        level.playSound(null, player.getX(), player.getY(), player.getZ(),
+                                SoundEvents.EXPERIENCE_ORB_PICKUP, SoundSource.PLAYERS, 1.0f, 1.0f);
+                        
+                        return 1;
+                    })
+            )
+        );
+
+        // /home - Teleport to your home
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+            dispatcher.register(
+                Commands.literal("home")
+                    .executes(ctx -> {
+                        if (!(ctx.getSource().getEntity() instanceof ServerPlayer player)) {
+                            ctx.getSource().sendFailure(Component.literal("Only players can use this command!"));
+                            return 0;
+                        }
+                        
+                        UUID uuid = player.getUUID();
+                        BlockPos homePos = PLAYER_HOMES.get(uuid);
+                        String homeDim = PLAYER_HOME_DIMENSIONS.get(uuid);
+                        
+                        if (homePos == null) {
+                            ctx.getSource().sendFailure(Component.literal("§cYou haven't set a home yet! Use /sethome first."));
+                            return 0;
+                        }
+                        
+                        ServerLevel currentLevel = (ServerLevel) player.level();
+                        String currentDim = currentLevel.dimension().toString();
+                        
+                        // Check if player is in the same dimension
+                        if (!currentDim.equals(homeDim)) {
+                            ctx.getSource().sendFailure(Component.literal("§cYour home is in a different dimension (" + homeDim + ")!"));
+                            return 0;
+                        }
+                        
+                        // Teleport with effects
+                        teleportPlayer(player, currentLevel, homePos, "§a✦ Welcome home!");
+                        
+                        return 1;
+                    })
+            )
+        );
+
+        // /tpa <player> - Request to teleport to another player
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+            dispatcher.register(
+                Commands.literal("tpa")
+                    .then(Commands.argument("target", EntityArgument.player())
+                        .executes(ctx -> {
+                            if (!(ctx.getSource().getEntity() instanceof ServerPlayer requester)) {
+                                ctx.getSource().sendFailure(Component.literal("Only players can use this command!"));
+                                return 0;
+                            }
+                            
+                            ServerPlayer target = EntityArgument.getPlayer(ctx, "target");
+                            
+                            if (requester == target) {
+                                ctx.getSource().sendFailure(Component.literal("§cYou can't teleport to yourself!"));
+                                return 0;
+                            }
+                            
+                            // Check if there's already a pending request to this player
+                            if (TPA_REQUESTS.containsKey(target.getUUID()) && 
+                                TPA_REQUESTS.get(target.getUUID()).equals(requester.getUUID())) {
+                                ctx.getSource().sendFailure(Component.literal("§cYou already have a pending request to this player!"));
+                                return 0;
+                            }
+                            
+                            // Store the request
+                            TPA_REQUESTS.put(target.getUUID(), requester.getUUID());
+                            TPA_REQUEST_TIMES.put(target.getUUID(), System.currentTimeMillis());
+                            
+                            // Notify both players
+                            requester.displayClientMessage(
+                                    Component.literal("§eTeleport request sent to §f" + target.getName().getString()), false);
+                            
+                            target.displayClientMessage(
+                                    Component.literal("\n§e§lTPA Request\n§f" + requester.getName().getString() + " §ewants to teleport to you.\n" +
+                                            "§a/tpaccept §7to accept | §c/tpdeny §7to deny\n"), false);
+                            
+                            // Play sound to target
+                            if (target.level() instanceof ServerLevel sl) {
+                                sl.playSound(null, target.getX(), target.getY(), target.getZ(),
+                                        SoundEvents.NOTE_BLOCK_CHIME.value(), SoundSource.PLAYERS, 1.0f, 1.0f);
+                            }
+                            
+                            return 1;
+                        }))
+            )
+        );
+
+        // /tpaccept - Accept a teleport request
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+            dispatcher.register(
+                Commands.literal("tpaccept")
+                    .executes(ctx -> {
+                        if (!(ctx.getSource().getEntity() instanceof ServerPlayer target)) {
+                            ctx.getSource().sendFailure(Component.literal("Only players can use this command!"));
+                            return 0;
+                        }
+                        
+                        UUID targetUUID = target.getUUID();
+                        UUID requesterUUID = TPA_REQUESTS.get(targetUUID);
+                        
+                        if (requesterUUID == null) {
+                            ctx.getSource().sendFailure(Component.literal("§cYou don't have any pending teleport requests!"));
+                            return 0;
+                        }
+                        
+                        // Check if request expired
+                        Long requestTime = TPA_REQUEST_TIMES.get(targetUUID);
+                        if (requestTime != null && System.currentTimeMillis() - requestTime > 60000) {
+                            TPA_REQUESTS.remove(targetUUID);
+                            TPA_REQUEST_TIMES.remove(targetUUID);
+                            ctx.getSource().sendFailure(Component.literal("§cThis teleport request has expired!"));
+                            return 0;
+                        }
+                        
+                        ServerPlayer requester = ctx.getSource().getServer().getPlayerList().getPlayer(requesterUUID);
+                        
+                        if (requester == null) {
+                            ctx.getSource().sendFailure(Component.literal("§cThe player who requested teleport is no longer online!"));
+                            TPA_REQUESTS.remove(targetUUID);
+                            TPA_REQUEST_TIMES.remove(targetUUID);
+                            return 0;
+                        }
+                        
+                        // Check if same dimension
+                        if (!requester.level().equals(target.level())) {
+                            target.displayClientMessage(Component.literal("§cYou can't accept: " + requester.getName().getString() + " is in a different dimension!"), false);
+                            TPA_REQUESTS.remove(targetUUID);
+                            TPA_REQUEST_TIMES.remove(targetUUID);
+                            return 0;
+                        }
+                        
+                        // Teleport the requester to target
+                        ServerLevel level = (ServerLevel) target.level();
+                        BlockPos targetPos = target.blockPosition();
+                        
+                        // Clear the request
+                        TPA_REQUESTS.remove(targetUUID);
+                        TPA_REQUEST_TIMES.remove(targetUUID);
+                        
+                        // Teleport with effects
+                        teleportPlayer(requester, level, targetPos, "§a✦ Teleport accepted!");
+                        
+                        // Notify target
+                        target.displayClientMessage(
+                                Component.literal("§a✦ You accepted §f" + requester.getName().getString() + "§a's teleport request."), false);
+                        
+                        return 1;
+                    })
+            )
+        );
+
+        // /tpdeny - Deny a teleport request
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+            dispatcher.register(
+                Commands.literal("tpdeny")
+                    .executes(ctx -> {
+                        if (!(ctx.getSource().getEntity() instanceof ServerPlayer target)) {
+                            ctx.getSource().sendFailure(Component.literal("Only players can use this command!"));
+                            return 0;
+                        }
+                        
+                        UUID targetUUID = target.getUUID();
+                        UUID requesterUUID = TPA_REQUESTS.get(targetUUID);
+                        
+                        if (requesterUUID == null) {
+                            ctx.getSource().sendFailure(Component.literal("§cYou don't have any pending teleport requests!"));
+                            return 0;
+                        }
+                        
+                        ServerPlayer requester = ctx.getSource().getServer().getPlayerList().getPlayer(requesterUUID);
+                        
+                        // Clear the request
+                        TPA_REQUESTS.remove(targetUUID);
+                        TPA_REQUEST_TIMES.remove(targetUUID);
+                        
+                        target.displayClientMessage(Component.literal("§c✗ You denied the teleport request."), false);
+                        
+                        if (requester != null) {
+                            requester.displayClientMessage(
+                                    Component.literal("§c✗ §f" + target.getName().getString() + " §cdenied your teleport request."), false);
+                        }
+                        
+                        return 1;
+                    })
+            )
+        );
+    }
+
+    /**
+     * Teleports a player to a position with visual and sound effects
+     */
+    private void teleportPlayer(ServerPlayer player, ServerLevel level, BlockPos pos, String message) {
+        // Particles at old location
+        level.sendParticles(ParticleTypes.PORTAL,
+                player.getX(), player.getY() + 1, player.getZ(),
+                50, 0.5, 1.0, 0.5, 0.1);
+        
+        // Play sound at old location
+        level.playSound(null, player.getX(), player.getY(), player.getZ(),
+                SoundEvents.ENDERMAN_TELEPORT, SoundSource.PLAYERS, 1.0f, 1.0f);
+        
+        // Teleport
+        player.teleportTo(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5);
+        
+        // Particles at new location
+        level.sendParticles(ParticleTypes.PORTAL,
+                player.getX(), player.getY() + 1, player.getZ(),
+                50, 0.5, 1.0, 0.5, 0.1);
+        
+        // Play sound at new location
+        level.playSound(null, player.getX(), player.getY(), player.getZ(),
+                SoundEvents.ENDERMAN_TELEPORT, SoundSource.PLAYERS, 1.0f, 1.0f);
+        
+        // Send message
+        player.displayClientMessage(Component.literal(message), false);
+    }
+
+    // =========================================================================
+    // CHANGELING - Shapeshifting mimic
+    // =========================================================================
+    private static final Map<UUID, Long> CHANGELING_COOLDOWNS = new ConcurrentHashMap<>();
+    private static final long CHANGELING_COOLDOWN_TICKS = 6000L; // 5 minutes
+
+    private void registerChangelingEvents() {
+        ServerTickEvents.END_SERVER_TICK.register(server -> {
+            if (server.getTickCount() % 200 != 0) return; // Check every 10 seconds
+
+            for (ServerPlayer target : server.getPlayerList().getPlayers()) {
+                ServerLevel sl = (ServerLevel) target.level();
+
+                // Only spawn in overworld during day
+                if (!sl.dimension().equals(ServerLevel.OVERWORLD)) continue;
+                long dayTime = sl.getDayTime() % 24000;
+                if (dayTime < 1000 || dayTime > 11000) continue; // Day time only
+
+                // Check biomes - villages, plains, forests
+                var biome = sl.getBiome(target.blockPosition());
+                boolean validBiome = biome.is(BiomeTags.IS_OVERWORLD) && 
+                        (sl.getBlockState(target.blockPosition().below()).is(Blocks.GRASS_BLOCK) ||
+                         sl.getBlockState(target.blockPosition().below()).is(Blocks.DIRT));
+                if (!validBiome) continue;
+
+                // Per-player cooldown
+                long now = sl.getGameTime();
+                Long lastSpawn = CHANGELING_COOLDOWNS.get(target.getUUID());
+                if (lastSpawn != null && now - lastSpawn < CHANGELING_COOLDOWN_TICKS) continue;
+
+                // No Changeling already nearby
+                if (!sl.getEntitiesOfClass(ChangelingEntity.class,
+                        target.getBoundingBox().inflate(50.0)).isEmpty()) continue;
+
+                // ~0.5% chance per check
+                if (sl.getRandom().nextInt(200) != 0) continue;
+
+                BlockPos spawnPos = findChangelingPos(sl, target);
+                if (spawnPos == null) continue;
+
+                ChangelingEntity changeling = new ChangelingEntity(ChangelingEntity.TYPE, sl);
+                changeling.setPos(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
+                sl.addFreshEntity(changeling);
+                CHANGELING_COOLDOWNS.put(target.getUUID(), now);
+            }
+        });
+        
+        // /spawnchangeling <target> — operator command
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+            dispatcher.register(
+                Commands.literal("spawnchangeling")
+                    .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                    .then(Commands.argument("target", EntityArgument.player())
+                        .executes(ctx -> {
+                            ServerPlayer target = EntityArgument.getPlayer(ctx, "target");
+                            ServerLevel sl = (ServerLevel) target.level();
+                            BlockPos spawnPos = findChangelingPos(sl, target);
+                            if (spawnPos == null) {
+                                ctx.getSource().sendFailure(Component.literal(
+                                        "No safe spawn position found near " + target.getName().getString()));
+                                return 0;
+                            }
+                            ChangelingEntity changeling = new ChangelingEntity(ChangelingEntity.TYPE, sl);
+                            changeling.setPos(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
+                            sl.addFreshEntity(changeling);
+                            ctx.getSource().sendSuccess(() -> Component.literal(
+                                    "§5Spawned a §dChangeling §5near §f" + target.getName().getString()), true);
+                            return 1;
+                        }))
+            )
+        );
+    }
+
+    private static BlockPos findChangelingPos(ServerLevel level, ServerPlayer player) {
+        for (int attempt = 0; attempt < 30; attempt++) {
+            double angle = level.getRandom().nextDouble() * Math.PI * 2;
+            double dist = 15 + level.getRandom().nextDouble() * 20; // 15-35 blocks away
+            int tx = (int) Math.floor(player.getX() + Math.cos(angle) * dist);
+            int tz = (int) Math.floor(player.getZ() + Math.sin(angle) * dist);
+
+            for (int ty = (int) player.getY() + 5; ty >= (int) player.getY() - 5; ty--) {
+                BlockPos floor = new BlockPos(tx, ty, tz);
+                BlockPos feet = new BlockPos(tx, ty + 1, tz);
+                BlockPos head = new BlockPos(tx, ty + 2, tz);
+
+                if (!level.getBlockState(floor).isSolid()) continue;
+                if (!level.getBlockState(feet).isAir() && !level.getBlockState(feet).is(BlockTags.REPLACEABLE)) continue;
+                if (!level.getBlockState(head).isAir() && !level.getBlockState(head).is(BlockTags.REPLACEABLE)) continue;
+                if (level.getBlockState(feet).is(BlockTags.LEAVES)) continue;
+                if (level.getBlockState(head).is(BlockTags.LEAVES)) continue;
+                
+                // Good lighting for passive mob disguise
+                int light = level.getMaxLocalRawBrightness(feet);
+                if (light >= 8) {
                     return feet;
                 }
             }

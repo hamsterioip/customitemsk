@@ -1,0 +1,19 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "ISI",
+    "LES",
+    "IWI"
+  ],
+  "key": {
+    "I": "minecraft:iron_ingot",
+    "S": "minecraft:shield",
+    "L": "minecraft:leather",
+    "E": "minecraft:emerald",
+    "W": "minecraft:iron_sword"
+  },
+  "result": {
+    "id": "customitemsk:sentinels_charm",
+    "count": 1
+  }
+}

@@ -10,6 +10,7 @@ import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
@@ -36,6 +37,17 @@ public class ExecutionersSwordItem extends Item {
             return InteractionResult.SUCCESS;
         }
         return InteractionResult.PASS;
+    }
+
+    /** On hit: shackle the victim and empower the attacker. */
+    @Override
+    public void postHurtEnemy(ItemStack stack, LivingEntity target, LivingEntity attacker) {
+        // Shackles: Slowness II + Weakness I for 5 seconds
+        target.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, 100, 1, false, true));
+        target.addEffect(new MobEffectInstance(MobEffects.WEAKNESS, 100, 0, false, true));
+        // Advantage: Strength I for 5 seconds to the attacker
+        attacker.addEffect(new MobEffectInstance(MobEffects.STRENGTH, 100, 0, false, true));
+        super.postHurtEnemy(stack, target, attacker);
     }
 
     /**

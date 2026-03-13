@@ -55,6 +55,48 @@ public class ModItems {
             props -> new TempestReaverItem(props.sword(ToolMaterial.NETHERITE, 10f, -3.0f)));
     public static final Item POISON_IVY = register("poison_ivy",
             props -> new PoisonIvyItem(props.durability(326)));
+    public static final Item BERSERKERS_FANG = register("berserkers_fang",
+            props -> new BerserkersFangItem(props
+                    .stacksTo(1)
+                    .component(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, true)
+                    .attributes(ItemAttributeModifiers.builder()
+                            .add(Attributes.ATTACK_DAMAGE,
+                                    new AttributeModifier(
+                                            Identifier.fromNamespaceAndPath("customitemsk", "damage.berserkers_fang"),
+                                            0.10, AttributeModifier.Operation.ADD_MULTIPLIED_BASE),
+                                    EquipmentSlotGroup.MAINHAND)
+                            .add(Attributes.ATTACK_SPEED,
+                                    new AttributeModifier(
+                                            Identifier.fromNamespaceAndPath("customitemsk", "speed.berserkers_fang"),
+                                            0.05, AttributeModifier.Operation.ADD_MULTIPLIED_BASE),
+                                    EquipmentSlotGroup.MAINHAND)
+                            .build())));
+    public static final Item SENTINELS_CHARM = register("sentinels_charm",
+            props -> new SentinelsCharmItem(props
+                    .stacksTo(1)
+                    .component(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, true)
+                    .attributes(ItemAttributeModifiers.builder()
+                            .add(Attributes.ATTACK_DAMAGE,
+                                    new AttributeModifier(
+                                            Identifier.fromNamespaceAndPath("customitemsk", "damage.sentinels_charm"),
+                                            0.05, AttributeModifier.Operation.ADD_MULTIPLIED_BASE),
+                                    EquipmentSlotGroup.MAINHAND)
+                            .add(Attributes.ARMOR,
+                                    new AttributeModifier(
+                                            Identifier.fromNamespaceAndPath("customitemsk", "armor.sentinels_charm"),
+                                            1.0, AttributeModifier.Operation.ADD_VALUE),
+                                    EquipmentSlotGroup.MAINHAND)
+                            .build())));
+    public static final Item PHOENIX_EMBER = register("phoenix_ember",
+            props -> new PhoenixEmberItem(props
+                    .stacksTo(1)
+                    .component(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, true)
+                    .fireResistant()));
+    public static final Item TEMPEST_CROWN = register("tempest_crown",
+            props -> new TempestCrownItem(props
+                    .stacksTo(1)
+                    .component(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, true)
+                    .fireResistant()));
     public static final Item KINGS_CROWN = register("kings_crown",
             props -> new KingsCrownItem(props
                     .component(DataComponents.EQUIPPABLE,
@@ -110,6 +152,10 @@ public class ModItems {
             entries2.accept(STARFORGED_PICKAXE);
             entries2.accept(KINGS_CROWN);
             entries2.accept(NATURES_GUARDIAN);
+            entries2.accept(SENTINELS_CHARM);
+            entries2.accept(BERSERKERS_FANG);
+            entries2.accept(PHOENIX_EMBER);
+            entries2.accept(TEMPEST_CROWN);
         });
     }
 }

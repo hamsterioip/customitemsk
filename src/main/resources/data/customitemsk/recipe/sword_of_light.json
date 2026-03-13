@@ -1,14 +1,15 @@
 {
   "type": "minecraft:crafting_shaped",
   "pattern": [
-    "PPP",
-    "PSP",
-    "PBP"
+    "DXD",
+    "GXG",
+    " S "
   ],
   "key": {
-    "P": "minecraft:paper",
-    "S": "minecraft:diamond_sword",
-    "B": "minecraft:book"
+    "D": "minecraft:diamond_sword",
+    "X": "minecraft:diamond_block",
+    "G": "minecraft:gold_block",
+    "S": "minecraft:stick"
   },
   "result": {
     "id": "customitemsk:sword_of_light",
