@@ -17,6 +17,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
 
       - name: Setup JDK 21
         uses: actions/setup-java@v4
@@ -32,22 +35,14 @@ jobs:
 
       - name: Rename JAR for release
         run: |
-          # Find the main JAR file (not sources, not dev)
           MAIN_JAR=$(find build/libs -name "*.jar" -not -name "*-sources.jar" -not -name "*-dev.jar" | head -n 1)
-          
           if [ -z "$MAIN_JAR" ]; then
             echo "❌ No JAR file found!"
             ls -la build/libs/
             exit 1
           fi
-          
-          echo "✅ Found JAR: $MAIN_JAR"
-          
-          # Copy to a standard name
           cp "$MAIN_JAR" build/libs/customitemsk.jar
-          
-          echo "✅ Renamed to: build/libs/customitemsk.jar"
-          ls -la build/libs/
+          echo "✅ JAR ready: build/libs/customitemsk.jar"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -89,7 +84,12 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add version.json
-          git diff --staged --quiet || (git commit -m "Update version.json to ${{ github.ref_name }}" && git push)
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update version.json to ${{ github.ref_name }}"
+            git push origin main
+          fi
 
       - name: Publish to Modrinth
         uses: Kir-Antipov/mc-publish@v3.3
