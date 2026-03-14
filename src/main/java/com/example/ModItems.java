@@ -92,7 +92,7 @@ public class ModItems {
                     .stacksTo(1)
                     .component(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, true)
                     .fireResistant()));
-    public static final Item TEMPEST_CROWN = register("tempest_crown",
+    public static final Item TEMPEST_RELIC = register("tempest_relic",
             props -> new TempestCrownItem(props
                     .stacksTo(1)
                     .component(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, true)
@@ -155,7 +155,7 @@ public class ModItems {
             entries2.accept(SENTINELS_CHARM);
             entries2.accept(BERSERKERS_FANG);
             entries2.accept(PHOENIX_EMBER);
-            entries2.accept(TEMPEST_CROWN);
+            entries2.accept(TEMPEST_RELIC);
         });
     }
 }
