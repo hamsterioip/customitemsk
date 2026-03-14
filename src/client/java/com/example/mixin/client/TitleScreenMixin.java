@@ -15,38 +15,23 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(TitleScreen.class)
 public class TitleScreenMixin {
 
-    @Inject(method = "render", at = @At("TAIL"))
-    private void renderCustomText(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick, CallbackInfo ci) {
-        try {
-            TitleScreen screen = (TitleScreen)(Object)this;
-            var font = Minecraft.getInstance().font;
-            int screenWidth = screen.width;
-            int screenHeight = screen.height;
-            
-            // === BOTTOM CENTER - Made by Koon ===
-            Component creditText = Component.literal("§e§lMade by §c§lKoon");
-            Component modName = Component.literal("§7| §b§lCustomItemsK");
-            
-            int creditWidth = font.width(creditText);
-            int modNameWidth = font.width(modName);
-            int totalWidth = creditWidth + modNameWidth;
-            
-            int bottomX = (screenWidth - totalWidth) / 2;
-            int bottomY = screenHeight - 15;
-            
-            guiGraphics.drawString(font, creditText, bottomX, bottomY, 0xFFFFFF, true);
-            guiGraphics.drawString(font, modName, bottomX + creditWidth, bottomY, 0xFFFFFF, true);
-            
-            // === TOP RIGHT - Version ===
-            Component versionText = Component.literal("§7Version: §a§lv1.0.3");
-            int versionWidth = font.width(versionText);
-            int versionX = screenWidth - versionWidth - 5; // 5 pixels from right edge
-            int versionY = 5; // 5 pixels from top
-            
-            guiGraphics.drawString(font, versionText, versionX, versionY, 0xFFFFFF, true);
-            
-        } catch (Exception e) {
-            // Silently fail if something goes wrong
-        }
+    @Inject(at = @At("RETURN"), method = "render")
+    private void onRender(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick, CallbackInfo ci) {
+        TitleScreen screen = (TitleScreen) (Object) this;
+        Minecraft mc = Minecraft.getInstance();
+        
+        int width = screen.width;
+        int height = screen.height;
+        
+        // Bottom center - Made by Koon
+        String credit = "Made by Koon | CustomItemsK";
+        int creditWidth = mc.font.width(credit);
+        guiGraphics.drawString(mc.font, credit, (width - creditWidth) / 2, height - 20, 0xFFD700, true);
+        
+        // Top right - Version
+        String version = "v1.0.3";
+        String versionText = "Version: " + version;
+        int versionWidth = mc.font.width(versionText);
+        guiGraphics.drawString(mc.font, versionText, width - versionWidth - 10, 10, 0x55FF55, true);
     }
 }
