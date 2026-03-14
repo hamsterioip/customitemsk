@@ -15,11 +15,12 @@ import java.util.Scanner;
  * Connector Mod - Auto-updater for CustomItemsK.
  *
  * On startup:
- *   1. Apply any .pending update left over from a previous crashed session.
+ *   1. Apply any .pending update left over from a previous session.
  *   2. Check GitHub for a newer version.
  *   3. If found, download to customitemsk.jar.pending (no file-lock conflict).
- *   4. Register a JVM shutdown hook that moves .pending → customitemsk.jar
- *      after the JVM has released all file locks (works on Windows too).
+ *   4. On shutdown, write a polling batch file (_csk_update.bat) that waits
+ *      until the JVM releases the file lock, then swaps pending → jar.
+ *      This is the only approach that reliably works on Windows.
  */
 public class ConnectorMod implements ModInitializer {
     public static final Logger LOGGER = LoggerFactory.getLogger("customitemsk-connector");
@@ -38,7 +39,7 @@ public class ConnectorMod implements ModInitializer {
     @Override
     public void onInitialize() {
         LOGGER.info("CustomItemsK Connector starting...");
-        applyPendingUpdate();   // Apply any leftover .pending from a crashed session
+        applyPendingUpdate();
 
         new Thread(() -> {
             try { checkForUpdates(); }
@@ -47,7 +48,7 @@ public class ConnectorMod implements ModInitializer {
     }
 
     // -------------------------------------------------------------------------
-    // Apply a previously-downloaded pending update (crash-recovery)
+    // Apply a previously-downloaded pending update
     // -------------------------------------------------------------------------
 
     private void applyPendingUpdate() {
@@ -57,29 +58,93 @@ public class ConnectorMod implements ModInitializer {
             Path targetPath  = modsDir.resolve(MOD_FILENAME);
 
             if (Files.exists(pendingPath)) {
-                // Delete any old customitemsk jar files first
-                cleanupOldVersions(modsDir);
-                
-                Files.move(pendingPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
-                LOGGER.info("Applied pending update from previous session — restart may be needed.");
+                try {
+                    cleanupOldVersions(modsDir);
+                    Files.move(pendingPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
+                    LOGGER.info("Applied pending update — restart required for full effect.");
+                } catch (Exception e) {
+                    // On Windows the running JAR is locked — schedule a batch swap for next exit
+                    LOGGER.debug("Direct apply failed (JAR locked), scheduling batch: " + e.getMessage());
+                    scheduleWindowsBatch(
+                            pendingPath.toAbsolutePath().toString(),
+                            targetPath.toAbsolutePath().toString(),
+                            modsDir);
+                }
             }
         } catch (Exception e) {
-            // File still locked or missing — not a hard error
-            LOGGER.debug("Could not apply .pending on startup: " + e.getMessage());
+            LOGGER.debug("applyPendingUpdate error: " + e.getMessage());
         }
     }
-    
+
+    // -------------------------------------------------------------------------
+    // Windows batch-file swap (polling loop — survives force-close)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Writes _csk_update.bat to the mods folder and either registers a JVM
+     * shutdown hook to launch it (normal path) or launches it immediately
+     * (called from within a shutdown hook, where addShutdownHook would throw).
+     *
+     * The batch file polls every 2 s until it can delete the old JAR (i.e. the
+     * JVM has released the file lock), then renames .pending → .jar.
+     */
+    private void scheduleWindowsBatch(String pendingStr, String targetStr, Path modsDir) {
+        if (!System.getProperty("os.name", "").toLowerCase().contains("win")) return;
+        try {
+            Path batchFile = modsDir.resolve("_csk_update.bat");
+            String nl = "\r\n";
+            String batch =
+                "@echo off" + nl +
+                "set PENDING=" + pendingStr + nl +
+                "set TARGET=" + targetStr + nl +
+                "set COUNT=0" + nl +
+                ":LOOP" + nl +
+                "set /a COUNT+=1" + nl +
+                "if %COUNT% GTR 30 exit /b 1" + nl +
+                "timeout /t 2 /nobreak >nul" + nl +
+                "del /f /q \"%TARGET%\" 2>nul" + nl +
+                "if exist \"%TARGET%\" goto LOOP" + nl +
+                "move /y \"%PENDING%\" \"%TARGET%\"" + nl +
+                "del \"%~f0\"" + nl;
+            Files.writeString(batchFile, batch);
+
+            try {
+                // Normal path: register a shutdown hook to launch the batch after JVM exits
+                Runtime.getRuntime().addShutdownHook(new Thread(() ->
+                        launchBatch(batchFile), "CustomItemsK-WinBatch"));
+            } catch (IllegalStateException e) {
+                // Already shutting down — launch directly (batch will poll until lock released)
+                launchBatch(batchFile);
+            }
+        } catch (Exception e) {
+            LOGGER.error("Could not write update batch: " + e.getMessage());
+        }
+    }
+
+    private void launchBatch(Path batchFile) {
+        try {
+            String path = batchFile.toAbsolutePath().toString();
+            // "start "" /min cmd /c ..." creates a detached minimised window that
+            // outlives the JVM parent process.
+            new ProcessBuilder("cmd", "/c",
+                    "start \"\" /min cmd /c \"" + path + "\"")
+                    .start();
+            LOGGER.info("Windows update batch launched — files will swap after JVM exits.");
+        } catch (Exception e) {
+            LOGGER.error("Could not launch update batch: " + e.getMessage());
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Clean up old version JARs to prevent duplicates
     // -------------------------------------------------------------------------
-    
+
     private void cleanupOldVersions(Path modsDir) {
         try {
             Files.list(modsDir)
                 .filter(p -> {
                     String name = p.getFileName().toString().toLowerCase();
-                    // Match customitemsk*.jar but not the .pending file
-                    return name.startsWith("customitemsk") 
+                    return name.startsWith("customitemsk")
                            && name.endsWith(".jar")
                            && !name.equals(MOD_FILENAME)
                            && !name.equals(MOD_FILENAME + ".pending");
@@ -193,7 +258,7 @@ public class ConnectorMod implements ModInitializer {
     }
 
     // -------------------------------------------------------------------------
-    // Download update to .pending, then apply via shutdown hook
+    // Download update to .pending, then apply via batch on shutdown
     // -------------------------------------------------------------------------
 
     private void downloadUpdate(String downloadUrl, String newVersion) {
@@ -204,7 +269,6 @@ public class ConnectorMod implements ModInitializer {
             Path targetPath  = modsDir.resolve(MOD_FILENAME);
             Path pendingPath = modsDir.resolve(MOD_FILENAME + ".pending");
 
-            // Download to .pending — avoids touching the locked .jar
             URLConnection conn = new URL(downloadUrl).openConnection();
             conn.setConnectTimeout(10_000);
             conn.setReadTimeout(60_000);
@@ -216,35 +280,31 @@ public class ConnectorMod implements ModInitializer {
                 throw new Exception("Downloaded file too small — possible corruption");
             }
 
-            // Signal the client-side UI that an update is waiting
-            updateReady   = true;
+            updateReady    = true;
             pendingVersion = newVersion;
 
-            // Shutdown hook: runs after JVM releases all file locks (works on Windows)
             String pending = pendingPath.toAbsolutePath().toString();
             String target  = targetPath.toAbsolutePath().toString();
 
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                // Try a direct atomic move first (works on Linux/macOS, and on
+                // Windows if Minecraft somehow released the lock early)
                 try {
-                    // Clean up old versions first
                     cleanupOldVersions(modsDir);
-                    
                     Files.move(Paths.get(pending), Paths.get(target),
                             StandardCopyOption.REPLACE_EXISTING);
                     LOGGER.info("Update applied: " + newVersion);
-                } catch (Exception e) {
-                    // Windows fallback: launch a delayed OS command after JVM exits
-                    if (System.getProperty("os.name", "").toLowerCase().contains("win")) {
-                        try {
-                            new ProcessBuilder("cmd", "/c",
-                                    "timeout /t 3 >nul && move /y \"" + pending + "\" \"" + target + "\"")
-                                    .start();
-                        } catch (Exception pe) {
-                            LOGGER.error("OS fallback failed: " + pe.getMessage());
-                        }
-                    } else {
-                        LOGGER.error("Could not apply update: " + e.getMessage());
-                    }
+                    return;
+                } catch (Exception ignored) {
+                    // Expected on Windows — fall through to batch approach
+                }
+
+                // Batch-file polling swap: detached cmd process polls until the
+                // JVM has fully exited and released the file lock, then swaps.
+                scheduleWindowsBatch(pending, target, modsDir);
+
+                if (!System.getProperty("os.name", "").toLowerCase().contains("win")) {
+                    LOGGER.error("Could not apply update on non-Windows — manual reinstall needed.");
                 }
             }, "CustomItemsK-UpdateApplier"));
 
