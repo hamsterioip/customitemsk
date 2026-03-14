@@ -1,15 +1,22 @@
 @echo off
 chcp 65001 >nul
-title Fix Node.js Warning & Push
+title Fix Build & Push v1.0.3
 
-echo 🔧 Fixing Node.js deprecation warning...
-git add .github/workflows/publish.yml
-git commit -m "Fix Node.js deprecation warning"
+echo 🔨 Fixing version display...
+git add .
+git commit -m "Fix version display in title screen"
 git push origin main
 
 echo.
-echo ✅ Fix pushed!
+echo 🗑️ Deleting broken v1.0.3...
+git push --delete origin v1.0.3 2>nul
+git tag -d v1.0.3 2>nul
+
 echo.
-echo Your next release will not show the warning.
+echo 🏷️ Recreating v1.0.3...
+git tag v1.0.3
+git push origin v1.0.3
+
 echo.
+echo ✅ Done! Check https://github.com/hamsterioip/customitemsk/actions
 pause

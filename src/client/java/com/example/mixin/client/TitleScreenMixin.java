@@ -38,16 +38,7 @@ public class TitleScreenMixin {
             guiGraphics.drawString(font, modName, bottomX + creditWidth, bottomY, 0xFFFFFF, true);
             
             // === TOP RIGHT - Version ===
-            // Get version from mod metadata
-            String version = "Unknown";
-            try {
-                version = Minecraft.getInstance().getModList().getMod("customitemsk")
-                    .getVersion().toString();
-            } catch (Exception e) {
-                version = "v1.0.2"; // Fallback version
-            }
-            
-            Component versionText = Component.literal("§7Version: §a§l" + version);
+            Component versionText = Component.literal("§7Version: §a§lv1.0.3");
             int versionWidth = font.width(versionText);
             int versionX = screenWidth - versionWidth - 5; // 5 pixels from right edge
             int versionY = 5; // 5 pixels from top
