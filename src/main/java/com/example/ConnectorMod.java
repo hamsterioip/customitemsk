@@ -52,17 +52,48 @@ public class ConnectorMod implements ModInitializer {
 
     private void applyPendingUpdate() {
         try {
-            Path modsDir    = FabricLoader.getInstance().getGameDir().resolve("mods");
+            Path modsDir     = FabricLoader.getInstance().getGameDir().resolve("mods");
             Path pendingPath = modsDir.resolve(MOD_FILENAME + ".pending");
             Path targetPath  = modsDir.resolve(MOD_FILENAME);
 
             if (Files.exists(pendingPath)) {
+                // Delete any old customitemsk jar files first
+                cleanupOldVersions(modsDir);
+                
                 Files.move(pendingPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
                 LOGGER.info("Applied pending update from previous session — restart may be needed.");
             }
         } catch (Exception e) {
             // File still locked or missing — not a hard error
             LOGGER.debug("Could not apply .pending on startup: " + e.getMessage());
+        }
+    }
+    
+    // -------------------------------------------------------------------------
+    // Clean up old version JARs to prevent duplicates
+    // -------------------------------------------------------------------------
+    
+    private void cleanupOldVersions(Path modsDir) {
+        try {
+            Files.list(modsDir)
+                .filter(p -> {
+                    String name = p.getFileName().toString().toLowerCase();
+                    // Match customitemsk*.jar but not the .pending file
+                    return name.startsWith("customitemsk") 
+                           && name.endsWith(".jar")
+                           && !name.equals(MOD_FILENAME)
+                           && !name.equals(MOD_FILENAME + ".pending");
+                })
+                .forEach(p -> {
+                    try {
+                        Files.deleteIfExists(p);
+                        LOGGER.info("Deleted old version: " + p.getFileName());
+                    } catch (Exception e) {
+                        LOGGER.warn("Could not delete old version " + p.getFileName() + ": " + e.getMessage());
+                    }
+                });
+        } catch (Exception e) {
+            LOGGER.debug("Could not list mods directory: " + e.getMessage());
         }
     }
 
@@ -195,6 +226,9 @@ public class ConnectorMod implements ModInitializer {
 
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 try {
+                    // Clean up old versions first
+                    cleanupOldVersions(modsDir);
+                    
                     Files.move(Paths.get(pending), Paths.get(target),
                             StandardCopyOption.REPLACE_EXISTING);
                     LOGGER.info("Update applied: " + newVersion);
