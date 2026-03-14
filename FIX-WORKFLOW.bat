@@ -1,43 +1,34 @@
 @echo off
 chcp 65001 >nul
-title Rebuild Release v1.0.3
+title Fix Workflow & Rebuild v1.0.2
 
 echo ╔══════════════════════════════════════════════════════════════╗
-echo ║         Rebuild Release v1.0.3 - Title Screen Fix            ║
+echo ║         Fix Workflow & Rebuild v1.0.2                        ║
 echo ╚══════════════════════════════════════════════════════════════╝
 echo.
 
 cd /d "%~dp0"
 
-echo 🔧 Step 1: Committing fix...
-git add .
-git commit -m "Fix TitleScreenMixin location and add version display"
-
-echo.
-echo 🚀 Step 2: Pushing to GitHub...
+echo 🔧 Step 1: Pushing fixed workflow...
+git add .github/workflows/publish.yml
+git commit -m "Fix workflow to checkout main branch"
 git push origin main
 
 echo.
-echo 🗑️ Step 3: Deleting old v1.0.3 if exists...
-git push --delete origin v1.0.3 2>nul
-git tag -d v1.0.3 2>nul
+echo 🗑️ Step 2: Deleting broken v1.0.2 tag...
+git push --delete origin v1.0.2 2>nul
+git tag -d v1.0.2 2>nul
 
 echo.
-echo 🏷️ Step 4: Creating release v1.0.3...
-git tag v1.0.3
-git push origin v1.0.3
+echo 🏷️ Step 3: Recreating v1.0.2 tag...
+git tag v1.0.2
+git push origin v1.0.2
 
 echo.
 echo ╔══════════════════════════════════════════════════════════════╗
-echo ║                   ✅ v1.0.3 RELEASED!                        ║
+echo ║                   ✅ REBUILD STARTED!                        ║
 echo ╠══════════════════════════════════════════════════════════════╣
-echo ║                                                              ║
 echo ║  Check: https://github.com/hamsterioip/customitemsk/actions ║
-echo ║                                                              ║
-echo ║  When you restart Minecraft, you'll see:                    ║
-echo ║  • "Made by Koon | CustomItemsK" at bottom                  ║
-echo ║  • "Version: v1.0.3" at top right                           ║
-echo ║                                                              ║
 echo ╚══════════════════════════════════════════════════════════════╝
 echo.
 pause
