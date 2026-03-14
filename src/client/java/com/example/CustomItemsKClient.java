@@ -35,18 +35,25 @@ public class CustomItemsKClient implements ClientModInitializer {
         // Render the overlay over the HUD
         HudRenderCallback.EVENT.register(WatcherJumpscareOverlay::render);
 
-        // Chat reminder when joining a world
+        // Chat notification when joining a world
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
-            if (ConnectorMod.updateReady) {
-                client.execute(() -> {
-                    if (client.player != null) {
-                        client.player.displayClientMessage(Component.literal(
-                            "§e[CustomItemsK] §aUpdate §b" + ConnectorMod.pendingVersion +
-                            " §adownloaded! §eClose Minecraft completely and reopen it to apply."
-                        ), false);
-                    }
-                });
-            }
+            client.execute(() -> {
+                if (client.player == null) return;
+                String version = FabricLoader.getInstance()
+                        .getModContainer("customitemsk")
+                        .map(c -> c.getMetadata().getVersion().getFriendlyString())
+                        .orElse("?");
+                if (ConnectorMod.updateReady) {
+                    client.player.displayClientMessage(Component.literal(
+                        "§e[CustomItemsK] §cv" + version + " §e— Update §b" + ConnectorMod.pendingVersion +
+                        " §edownloaded! Close Minecraft completely and reopen it to apply."
+                    ), false);
+                } else {
+                    client.player.displayClientMessage(Component.literal(
+                        "§e[CustomItemsK] §aRunning v" + version + " §7(up to date)"
+                    ), false);
+                }
+            });
         });
     }
 }
