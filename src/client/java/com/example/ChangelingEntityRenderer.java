@@ -27,12 +27,16 @@ class ChangelingRenderState extends HumanoidRenderState {
 public class ChangelingEntityRenderer extends HumanoidMobRenderer<ChangelingEntity, ChangelingRenderState, HumanoidModel<ChangelingRenderState>> {
 
     // Texture identifiers for different disguises
-    private static final Identifier COW_TEXTURE = Identifier.parse("minecraft:textures/entity/cow/cow.png");
-    private static final Identifier PIG_TEXTURE = Identifier.parse("minecraft:textures/entity/pig/pig.png");
-    private static final Identifier SHEEP_TEXTURE = Identifier.parse("minecraft:textures/entity/sheep/sheep.png");
-    private static final Identifier VILLAGER_TEXTURE = Identifier.parse("minecraft:textures/entity/villager/villager.png");
-    private static final Identifier CHICKEN_TEXTURE = Identifier.parse("minecraft:textures/entity/chicken.png");
-    private static final Identifier RABBIT_TEXTURE = Identifier.parse("minecraft:textures/entity/rabbit/brown.png");
+    private static final Identifier COW_TEXTURE      = Identifier.withDefaultNamespace("textures/entity/cow/cow.png");
+    private static final Identifier PIG_TEXTURE      = Identifier.withDefaultNamespace("textures/entity/pig/pig.png");
+    private static final Identifier SHEEP_TEXTURE    = Identifier.withDefaultNamespace("textures/entity/sheep/sheep.png");
+    private static final Identifier VILLAGER_TEXTURE = Identifier.withDefaultNamespace("textures/entity/villager/villager.png");
+    private static final Identifier CHICKEN_TEXTURE  = Identifier.withDefaultNamespace("textures/entity/chicken.png");
+    private static final Identifier RABBIT_TEXTURE   = Identifier.withDefaultNamespace("textures/entity/rabbit/brown.png");
+    private static final Identifier HORSE_TEXTURE    = Identifier.withDefaultNamespace("textures/entity/horse/horse_brown.png");
+    private static final Identifier CAT_TEXTURE      = Identifier.withDefaultNamespace("textures/entity/cat/tabby.png");
+    private static final Identifier FOX_TEXTURE      = Identifier.withDefaultNamespace("textures/entity/fox/fox.png");
+    private static final Identifier MOOSHROOM_TEXTURE= Identifier.withDefaultNamespace("textures/entity/cow/mooshroom.png");
     
     // True form texture (for when enraged - glitch effect)
     private static final Identifier TRUE_FORM_TEXTURE = 
@@ -70,6 +74,10 @@ public class ChangelingEntityRenderer extends HumanoidMobRenderer<ChangelingEnti
             case 3 -> VILLAGER_TEXTURE;
             case 4 -> CHICKEN_TEXTURE;
             case 5 -> RABBIT_TEXTURE;
+            case 6 -> HORSE_TEXTURE;
+            case 7 -> CAT_TEXTURE;
+            case 8 -> FOX_TEXTURE;
+            case 9 -> MOOSHROOM_TEXTURE;
             default -> COW_TEXTURE;
         };
     }
