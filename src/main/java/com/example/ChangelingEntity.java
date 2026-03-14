@@ -473,6 +473,18 @@ public class ChangelingEntity extends PathfinderMob {
         sl.sendParticles(ParticleTypes.WITCH, getX(), getY() + 1, getZ(), 25, 0.4, 0.5, 0.4, 0.05);
     }
 
+    public void setDisguise(DisguiseType type) {
+        currentDisguise = type;
+        entityData.set(DATA_DISGUISE_TYPE, type.id);
+    }
+
+    public static DisguiseType disguiseByName(String name) {
+        for (DisguiseType t : DisguiseType.values()) {
+            if (t.name.equalsIgnoreCase(name)) return t;
+        }
+        return null;
+    }
+
     public DisguiseType getDisguiseType() { return currentDisguise; }
     public boolean isEnraged() { return enraged; }
     public boolean isTamed() { return tamed; }

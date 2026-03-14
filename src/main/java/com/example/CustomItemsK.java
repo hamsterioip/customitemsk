@@ -1,6 +1,8 @@
 package com.example;
 
 import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.suggestion.SuggestionProvider;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import net.fabricmc.api.ModInitializer;
@@ -1567,30 +1569,61 @@ public class CustomItemsK implements ModInitializer {
             }
         });
         
-        // /spawnchangeling <target> — operator command
+        // /spawnchangeling <target> [disguise] — operator command
+        SuggestionProvider<CommandSourceStack> disguiseSuggestions = (ctx, builder) -> {
+            for (ChangelingEntity.DisguiseType t : ChangelingEntity.DisguiseType.values()) {
+                builder.suggest(t.name.toLowerCase());
+            }
+            return builder.buildFuture();
+        };
+
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
             dispatcher.register(
                 Commands.literal("spawnchangeling")
                     .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                     .then(Commands.argument("target", EntityArgument.player())
-                        .executes(ctx -> {
-                            ServerPlayer target = EntityArgument.getPlayer(ctx, "target");
-                            ServerLevel sl = (ServerLevel) target.level();
-                            BlockPos spawnPos = findChangelingPos(sl, target);
-                            if (spawnPos == null) {
-                                ctx.getSource().sendFailure(Component.literal(
-                                        "No safe spawn position found near " + target.getName().getString()));
-                                return 0;
-                            }
-                            ChangelingEntity changeling = new ChangelingEntity(ChangelingEntity.TYPE, sl);
-                            changeling.setPos(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
-                            sl.addFreshEntity(changeling);
-                            ctx.getSource().sendSuccess(() -> Component.literal(
-                                    "§5Spawned a §dChangeling §5near §f" + target.getName().getString()), true);
-                            return 1;
-                        }))
+                        // /spawnchangeling <target>  → random disguise
+                        .executes(ctx -> spawnChangeling(ctx, null))
+                        // /spawnchangeling <target> <disguise>  → specific disguise
+                        .then(Commands.argument("disguise", StringArgumentType.word())
+                            .suggests(disguiseSuggestions)
+                            .executes(ctx -> spawnChangeling(ctx,
+                                    StringArgumentType.getString(ctx, "disguise")))))
             )
         );
+    }
+
+    private static int spawnChangeling(CommandContext<CommandSourceStack> ctx, String disguiseName)
+            throws CommandSyntaxException {
+        ServerPlayer target = EntityArgument.getPlayer(ctx, "target");
+        ServerLevel sl = (ServerLevel) target.level();
+        BlockPos spawnPos = findChangelingPos(sl, target);
+        if (spawnPos == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "No safe spawn position found near " + target.getName().getString()));
+            return 0;
+        }
+        ChangelingEntity changeling = new ChangelingEntity(ChangelingEntity.TYPE, sl);
+        changeling.setPos(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
+
+        if (disguiseName != null && !disguiseName.isEmpty()) {
+            ChangelingEntity.DisguiseType type = ChangelingEntity.disguiseByName(disguiseName);
+            if (type == null) {
+                ctx.getSource().sendFailure(Component.literal(
+                        "Unknown disguise '" + disguiseName + "'. Valid: cow, pig, sheep, villager, chicken, rabbit, horse, cat, fox, mooshroom"));
+                return 0;
+            }
+            changeling.setDisguise(type);
+            sl.addFreshEntity(changeling);
+            final String typeName = type.name;
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "§5Spawned a §dChangeling §5disguised as a §f" + typeName + " §5near §f" + target.getName().getString()), true);
+        } else {
+            sl.addFreshEntity(changeling);
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "§5Spawned a §dChangeling §5near §f" + target.getName().getString()), true);
+        }
+        return 1;
     }
 
     private static BlockPos findChangelingPos(ServerLevel level, ServerPlayer player) {
