@@ -142,6 +142,19 @@ public class CustomItemsK implements ModInitializer {
                         .build(changelingKey));
         FabricDefaultAttributeRegistry.register(ChangelingEntity.TYPE, ChangelingEntity.createAttributes().build());
 
+        // Register The Hollow entity
+        ResourceKey<EntityType<?>> hollowKey = ResourceKey.create(
+                Registries.ENTITY_TYPE,
+                Identifier.fromNamespaceAndPath(MOD_ID, "hollow"));
+        HollowEntity.TYPE = Registry.register(
+                BuiltInRegistries.ENTITY_TYPE,
+                hollowKey,
+                EntityType.Builder.<HollowEntity>of(HollowEntity::new, MobCategory.MONSTER)
+                        .sized(0.6f, 1.95f)
+                        .clientTrackingRange(32)
+                        .build(hollowKey));
+        FabricDefaultAttributeRegistry.register(HollowEntity.TYPE, HollowEntity.createAttributes().build());
+
         // Register the jumpscare packet for server → client delivery
         PayloadTypeRegistry.playS2C().register(WatcherJumpscarePacket.ID, WatcherJumpscarePacket.CODEC);
 
@@ -158,6 +171,7 @@ public class CustomItemsK implements ModInitializer {
         registerWatcherEvents();
         registerStalkerEvents();
         registerChangelingEvents();
+        registerHollowCommands();
         registerTeleportCommands();
 
         // /spawnmimic <target> <skin> — operator command to manually spawn a mimic
@@ -1624,6 +1638,57 @@ public class CustomItemsK implements ModInitializer {
                     "§5Spawned a §dChangeling §5near §f" + target.getName().getString()), true);
         }
         return 1;
+    }
+
+    // ──────────────────────── The Hollow commands ─────────────────────────────
+
+    private void registerHollowCommands() {
+        // /spawnhollow <target> — spawns The Hollow near the target player
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+            dispatcher.register(
+                Commands.literal("spawnhollow")
+                    .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                    .then(Commands.argument("target", EntityArgument.player())
+                        .executes(ctx -> {
+                            ServerPlayer target = EntityArgument.getPlayer(ctx, "target");
+                            ServerLevel sl = (ServerLevel) target.level();
+                            BlockPos pos = findDarkSpawnPos(sl, target);
+                            if (pos == null) {
+                                ctx.getSource().sendFailure(
+                                        Component.literal("No dark spawn position found near "
+                                                + target.getName().getString()));
+                                return 0;
+                            }
+                            HollowEntity hollow = new HollowEntity(HollowEntity.TYPE, sl);
+                            hollow.setPos(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5);
+                            sl.addFreshEntity(hollow);
+                            ctx.getSource().sendSuccess(() -> Component.literal(
+                                    "§8Spawned §7The Hollow §8near §f"
+                                            + target.getName().getString()), true);
+                            return 1;
+                        }))
+            )
+        );
+    }
+
+    /** Finds a dark (light ≤ 4), two-block-tall air gap within 20–35 blocks of the player. */
+    private static BlockPos findDarkSpawnPos(ServerLevel level, ServerPlayer player) {
+        for (int attempt = 0; attempt < 40; attempt++) {
+            double angle = level.getRandom().nextDouble() * Math.PI * 2;
+            double dist  = 20 + level.getRandom().nextDouble() * 15;
+            int tx = (int) Math.floor(player.getX() + Math.cos(angle) * dist);
+            int tz = (int) Math.floor(player.getZ() + Math.sin(angle) * dist);
+            for (int ty = (int) player.getY() + 4; ty >= (int) player.getY() - 6; ty--) {
+                BlockPos floor = new BlockPos(tx, ty,     tz);
+                BlockPos feet  = new BlockPos(tx, ty + 1, tz);
+                BlockPos head  = new BlockPos(tx, ty + 2, tz);
+                if (!level.getBlockState(floor).isSolid()) continue;
+                if (!level.getBlockState(feet).isAir())   continue;
+                if (!level.getBlockState(head).isAir())   continue;
+                if (level.getMaxLocalRawBrightness(feet) <= 4) return feet;
+            }
+        }
+        return null;
     }
 
     private static BlockPos findChangelingPos(ServerLevel level, ServerPlayer player) {

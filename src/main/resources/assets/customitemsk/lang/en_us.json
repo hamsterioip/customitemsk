@@ -16,5 +16,7 @@
   "item.customitemsk.berserkers_fang": "Berserker's Fang",
   "item.customitemsk.phoenix_ember": "Phoenix Ember",
   "item.customitemsk.tempest_relic": "Tempest Relic",
-  "entity.customitemsk.watcher": "The Watcher"
+  "item.customitemsk.void_shard": "Void Shard",
+  "entity.customitemsk.watcher": "The Watcher",
+  "entity.customitemsk.hollow": "The Hollow"
 }

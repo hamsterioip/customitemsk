@@ -97,6 +97,14 @@ public class ModItems {
                     .stacksTo(1)
                     .component(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, true)
                     .fireResistant()));
+    public static final Item VOID_SHARD = register("void_shard",
+            props -> new VoidShardItem(props
+                    .stacksTo(16)
+                    .component(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, true)
+                    .component(DataComponents.LORE, new ItemLore(List.of(
+                            Component.literal("§8A fragment of something that should not exist."),
+                            Component.literal("§8The darkness remembers you.")
+                    )))));
     public static final Item KINGS_CROWN = register("kings_crown",
             props -> new KingsCrownItem(props
                     .component(DataComponents.EQUIPPABLE,
@@ -156,6 +164,7 @@ public class ModItems {
             entries2.accept(BERSERKERS_FANG);
             entries2.accept(PHOENIX_EMBER);
             entries2.accept(TEMPEST_RELIC);
+            entries2.accept(VOID_SHARD);
         });
     }
 }

@@ -23,6 +23,7 @@ public class CustomItemsKClient implements ClientModInitializer {
         EntityRendererRegistry.register(WatcherEntity.TYPE, WatcherEntityRenderer::new);
         EntityRendererRegistry.register(StalkerEntity.TYPE, StalkerEntityRenderer::new);
         EntityRendererRegistry.register(ChangelingEntity.TYPE, ChangelingEntityRenderer::new);
+        EntityRendererRegistry.register(HollowEntity.TYPE, HollowRenderer::new);
 
         // Watcher jumpscare: receive packet → trigger overlay
         ClientPlayNetworking.registerGlobalReceiver(
