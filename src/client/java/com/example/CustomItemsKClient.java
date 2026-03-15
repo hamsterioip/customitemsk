@@ -8,7 +8,6 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
-import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.gui.components.toasts.SystemToast;
@@ -64,41 +63,6 @@ public class CustomItemsKClient implements ClientModInitializer {
         // Render both overlays over the HUD
         HudRenderCallback.EVENT.register(WatcherJumpscareOverlay::render);
         HudRenderCallback.EVENT.register(HollowVigilOverlay::render);
-
-        // Title screen version badge (bottom-left corner)
-        ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, scaledHeight) -> {
-            if (!(screen instanceof TitleScreen)) return;
-            ScreenEvents.afterRender(screen).register((scr, graphics, mouseX, mouseY, tickDelta) -> {
-                String version = FabricLoader.getInstance()
-                        .getModContainer("customitemsk")
-                        .map(c -> c.getMetadata().getVersion().getFriendlyString())
-                        .orElse("?");
-                String line1, line2;
-                int barColor;
-                if (!ConnectorMod.checkComplete) {
-                    line1 = "§7CustomItemsK §8v" + version;
-                    line2 = "§8Checking for updates...";
-                    barColor = 0xFF444444;
-                } else if (ConnectorMod.updateReady) {
-                    line1 = "§eCustomItemsK §8v" + version;
-                    line2 = "§6Update ready: §b" + ConnectorMod.pendingVersion;
-                    barColor = 0xFFFFAA00;
-                } else {
-                    line1 = "§aCustomItemsK §8v" + version;
-                    line2 = "§7Up to date";
-                    barColor = 0xFF55AA55;
-                }
-                net.minecraft.client.gui.Font font = client.font;
-                int w = Math.max(font.width(line1), font.width(line2)) + 12;
-                int h = 22;
-                int x = 4;
-                int y = scaledHeight - h - 4;
-                graphics.fill(x, y, x + w, y + h, 0xBB000000);
-                graphics.fill(x, y, x + 2, y + h, barColor);
-                graphics.drawString(font, line1, x + 5, y + 3,  0xFFFFFF, false);
-                graphics.drawString(font, line2, x + 5, y + 13, 0xAAAAAA, false);
-            });
-        });
 
         // Chat notification when joining a world
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
