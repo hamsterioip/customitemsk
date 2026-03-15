@@ -27,8 +27,10 @@ public class ConnectorMod implements ModInitializer {
     public static final Logger LOGGER = LoggerFactory.getLogger("customitemsk-connector");
 
     /** Set to true once an update has been fully downloaded and is waiting for restart. */
-    public static volatile boolean updateReady   = false;
+    public static volatile boolean updateReady    = false;
     public static volatile String  pendingVersion = "";
+    /** Set to true once the version check has completed (success or failure). */
+    public static volatile boolean checkComplete  = false;
 
     private static final String GITHUB_USER  = "hamsterioip";
     private static final String GITHUB_REPO  = "customitemsk";
@@ -235,6 +237,8 @@ public class ConnectorMod implements ModInitializer {
             }
         } catch (Exception e) {
             LOGGER.error("Failed to check for updates: " + e.getMessage());
+        } finally {
+            checkComplete = true;
         }
     }
 
