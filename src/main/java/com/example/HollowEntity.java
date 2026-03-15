@@ -1,9 +1,11 @@
 package com.example;
 
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.damagesource.DamageSource;
@@ -233,8 +235,14 @@ public class HollowEntity extends PathfinderMob {
             }
 
             if (stareTimer >= TRIGGER_TICKS) {
-                player.addEffect(new MobEffectInstance(MobEffects.DARKNESS, 140, 0, false, false));
-                player.addEffect(new MobEffectInstance(MobEffects.NAUSEA,    80, 0, false, false));
+                // Blindness fog cannot be bypassed by any fullbright/gamma mod
+                player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, 120, 0, false, false));
+                player.addEffect(new MobEffectInstance(MobEffects.DARKNESS,  160, 0, false, false));
+                player.addEffect(new MobEffectInstance(MobEffects.NAUSEA,     80, 0, false, false));
+                // HUD vignette overlay — bypasses fullbright entirely
+                if (player instanceof ServerPlayer sp) {
+                    ServerPlayNetworking.send(sp, new HollowStarePacket());
+                }
                 sl.playSound(null, player.getX(), player.getY(), player.getZ(),
                         SoundEvents.SCULK_SHRIEKER_SHRIEK, SoundSource.HOSTILE, 0.4f, 0.2f);
                 player.displayClientMessage(

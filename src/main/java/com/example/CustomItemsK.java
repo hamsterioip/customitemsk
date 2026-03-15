@@ -157,6 +157,8 @@ public class CustomItemsK implements ModInitializer {
 
         // Register the jumpscare packet for server → client delivery
         PayloadTypeRegistry.playS2C().register(WatcherJumpscarePacket.ID, WatcherJumpscarePacket.CODEC);
+        // Register The Hollow stare packet
+        PayloadTypeRegistry.playS2C().register(HollowStarePacket.ID, HollowStarePacket.CODEC);
 
         ModItems.registerItems();
         registerStormBowEvents();

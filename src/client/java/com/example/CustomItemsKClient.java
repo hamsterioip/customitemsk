@@ -30,11 +30,20 @@ public class CustomItemsKClient implements ClientModInitializer {
                 WatcherJumpscarePacket.ID,
                 (payload, context) -> context.client().execute(WatcherJumpscareOverlay::trigger));
 
-        // Tick down the overlay each client tick
-        ClientTickEvents.END_CLIENT_TICK.register(client -> WatcherJumpscareOverlay.tick());
+        // Hollow stare: receive packet → trigger vignette overlay
+        ClientPlayNetworking.registerGlobalReceiver(
+                HollowStarePacket.ID,
+                (payload, context) -> context.client().execute(HollowVigilOverlay::trigger));
 
-        // Render the overlay over the HUD
+        // Tick down both overlays each client tick
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            WatcherJumpscareOverlay.tick();
+            HollowVigilOverlay.tick();
+        });
+
+        // Render both overlays over the HUD
         HudRenderCallback.EVENT.register(WatcherJumpscareOverlay::render);
+        HudRenderCallback.EVENT.register(HollowVigilOverlay::render);
 
         // Chat notification when joining a world
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
