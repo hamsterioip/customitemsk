@@ -63,9 +63,9 @@ public class ConnectorMod implements ModInitializer {
                     Files.move(pendingPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
                     LOGGER.info("Applied pending update — restart required for full effect.");
                 } catch (Exception e) {
-                    // On Windows the running JAR is locked — schedule a batch swap for next exit
-                    LOGGER.debug("Direct apply failed (JAR locked), scheduling batch: " + e.getMessage());
-                    scheduleWindowsBatch(
+                    // On Windows the running JAR is locked — launch watchdog to swap after exit
+                    LOGGER.debug("Direct apply failed (JAR locked), launching watchdog: " + e.getMessage());
+                    scheduleWindowsWatchdog(
                             pendingPath.toAbsolutePath().toString(),
                             targetPath.toAbsolutePath().toString(),
                             modsDir);
@@ -77,61 +77,58 @@ public class ConnectorMod implements ModInitializer {
     }
 
     // -------------------------------------------------------------------------
-    // Windows batch-file swap (polling loop — survives force-close)
+    // Windows watchdog batch — launched immediately, watches PID, survives force-kill
     // -------------------------------------------------------------------------
 
     /**
-     * Writes _csk_update.bat to the mods folder and either registers a JVM
-     * shutdown hook to launch it (normal path) or launches it immediately
-     * (called from within a shutdown hook, where addShutdownHook would throw).
+     * Writes _csk_update.bat and launches it as a detached process RIGHT NOW.
      *
-     * The batch file polls every 2 s until it can delete the old JAR (i.e. the
-     * JVM has released the file lock), then renames .pending → .jar.
+     * Unlike a shutdown hook, this watchdog is already running before Minecraft exits.
+     * It watches the Minecraft JVM PID in a loop.  The moment that PID disappears
+     * (clean quit, Modrinth stop button, crash — any exit), it waits for the file
+     * lock to release, then swaps .pending → .jar.
+     *
+     * A guard "if not exist PENDING" at the top of the swap section ensures the
+     * batch is a no-op if the shutdown hook already applied the update cleanly.
      */
-    private void scheduleWindowsBatch(String pendingStr, String targetStr, Path modsDir) {
+    private void scheduleWindowsWatchdog(String pendingStr, String targetStr, Path modsDir) {
         if (!System.getProperty("os.name", "").toLowerCase().contains("win")) return;
         try {
+            long pid = ProcessHandle.current().pid();
             Path batchFile = modsDir.resolve("_csk_update.bat");
             String nl = "\r\n";
             String batch =
                 "@echo off" + nl +
                 "set PENDING=" + pendingStr + nl +
                 "set TARGET=" + targetStr + nl +
-                "set COUNT=0" + nl +
-                ":LOOP" + nl +
-                "set /a COUNT+=1" + nl +
-                "if %COUNT% GTR 30 exit /b 1" + nl +
-                "timeout /t 2 /nobreak >nul" + nl +
+                // Wait for the Minecraft JVM PID to disappear (works for both
+                // clean quit and force-kill by the launcher / Modrinth app).
+                ":WAITPID" + nl +
+                "tasklist /fi \"PID eq " + pid + "\" 2>nul | find /i \"" + pid + "\" >nul" + nl +
+                "if %ERRORLEVEL%==0 (" + nl +
+                "    timeout /t 1 /nobreak >nul" + nl +
+                "    goto WAITPID" + nl +
+                ")" + nl +
+                // If the shutdown hook already moved the file, silently exit.
+                "if not exist \"%PENDING%\" (del \"%~f0\" & exit /b 0)" + nl +
+                // Poll until the file lock is released, then swap.
+                ":DELLOOP" + nl +
                 "del /f /q \"%TARGET%\" 2>nul" + nl +
-                "if exist \"%TARGET%\" goto LOOP" + nl +
+                "if exist \"%TARGET%\" (" + nl +
+                "    timeout /t 2 /nobreak >nul" + nl +
+                "    goto DELLOOP" + nl +
+                ")" + nl +
                 "move /y \"%PENDING%\" \"%TARGET%\"" + nl +
                 "del \"%~f0\"" + nl;
             Files.writeString(batchFile, batch);
 
-            try {
-                // Normal path: register a shutdown hook to launch the batch after JVM exits
-                Runtime.getRuntime().addShutdownHook(new Thread(() ->
-                        launchBatch(batchFile), "CustomItemsK-WinBatch"));
-            } catch (IllegalStateException e) {
-                // Already shutting down — launch directly (batch will poll until lock released)
-                launchBatch(batchFile);
-            }
-        } catch (Exception e) {
-            LOGGER.error("Could not write update batch: " + e.getMessage());
-        }
-    }
-
-    private void launchBatch(Path batchFile) {
-        try {
-            String path = batchFile.toAbsolutePath().toString();
-            // "start "" /min cmd /c ..." creates a detached minimised window that
-            // outlives the JVM parent process.
+            // Launch detached — this process outlives the JVM
             new ProcessBuilder("cmd", "/c",
-                    "start \"\" /min cmd /c \"" + path + "\"")
+                    "start \"\" /min cmd /c \"" + batchFile.toAbsolutePath() + "\"")
                     .start();
-            LOGGER.info("Windows update batch launched — files will swap after JVM exits.");
+            LOGGER.info("Watchdog launched (PID " + pid + ") — update will apply after any exit.");
         } catch (Exception e) {
-            LOGGER.error("Could not launch update batch: " + e.getMessage());
+            LOGGER.error("Could not launch update watchdog: " + e.getMessage());
         }
     }
 
@@ -286,25 +283,22 @@ public class ConnectorMod implements ModInitializer {
             String pending = pendingPath.toAbsolutePath().toString();
             String target  = targetPath.toAbsolutePath().toString();
 
+            // Launch the watchdog NOW — it watches the Minecraft PID and swaps the
+            // files the moment that PID disappears, covering both clean quit and
+            // Modrinth/launcher force-kill (shutdown hooks don't fire on force-kill).
+            scheduleWindowsWatchdog(pending, target, modsDir);
+
+            // Shutdown hook: on non-Windows (or graceful exit where lock releases
+            // early) try a direct move.  The watchdog's "if not exist PENDING" guard
+            // makes it a no-op if this succeeds first.
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                // Try a direct atomic move first (works on Linux/macOS, and on
-                // Windows if Minecraft somehow released the lock early)
                 try {
                     cleanupOldVersions(modsDir);
                     Files.move(Paths.get(pending), Paths.get(target),
                             StandardCopyOption.REPLACE_EXISTING);
-                    LOGGER.info("Update applied: " + newVersion);
-                    return;
+                    LOGGER.info("Update applied via shutdown hook: " + newVersion);
                 } catch (Exception ignored) {
-                    // Expected on Windows — fall through to batch approach
-                }
-
-                // Batch-file polling swap: detached cmd process polls until the
-                // JVM has fully exited and released the file lock, then swaps.
-                scheduleWindowsBatch(pending, target, modsDir);
-
-                if (!System.getProperty("os.name", "").toLowerCase().contains("win")) {
-                    LOGGER.error("Could not apply update on non-Windows — manual reinstall needed.");
+                    // On Windows the file is still locked here — watchdog handles it
                 }
             }, "CustomItemsK-UpdateApplier"));
 
