@@ -1,5 +1,6 @@
 package com.example;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
@@ -44,11 +45,11 @@ public class ReverieEntity extends PathfinderMob {
 
     public static EntityType<ReverieEntity> TYPE;
 
-    private static final double LOOK_DOT_THRESHOLD = Math.cos(Math.toRadians(8.0));
-    private static final double VANISH_DIST_SQ     = 8.0 * 8.0;
-    private static final int    MAX_LIFE_TICKS      = 72000;
-    private static final int    STAGE_ADVANCE_TICKS = 300;
-    private static final int    SLEEP_THRESHOLD     = 1000;
+    private static final double LOOK_DOT_THRESHOLD    = Math.cos(Math.toRadians(8.0));
+    private static final double FLEE_DIST_SQ          = 8.0 * 8.0;
+    private static final int    STAGE_ADVANCE_TICKS   = 300;
+    private static final int    SLEEP_THRESHOLD       = 1000;
+    private static final int    TELEPORT_COOLDOWN     = 60;
 
     /** Current encounter stage (1–3). Auto-advances over time. */
     public int  stage            = 1;
@@ -63,6 +64,7 @@ public class ReverieEntity extends PathfinderMob {
     private int  paranoidTimer      = 0;   // footsteps + behind-sounds
     private int  chatParanoidTimer  = 0;   // fake chat messages
     private int  darknessTimer      = 0;   // random darkness pulses
+    private int  tpCooldown         = 0;   // prevent teleporting every tick when spotted
     private boolean spawnSoundPlayed = false;
     private boolean whispered        = false;
 
@@ -98,10 +100,9 @@ public class ReverieEntity extends PathfinderMob {
         if (paranoidTimer      > 0) paranoidTimer--;
         if (chatParanoidTimer  > 0) chatParanoidTimer--;
         if (darknessTimer      > 0) darknessTimer--;
+        if (tpCooldown         > 0) tpCooldown--;
 
         ServerLevel sl = (ServerLevel) level();
-
-        if (lifeTicks >= MAX_LIFE_TICKS) { vanish(sl, null); return; }
 
         if (!spawnSoundPlayed && lifeTicks == 1) {
             spawnSoundPlayed = true;
@@ -144,13 +145,19 @@ public class ReverieEntity extends PathfinderMob {
             if (timeSinceRest < SLEEP_THRESHOLD) { vanish(sl, target); return; }
         }
 
-        // Vanish detection: look or proximity
-        List<Player> nearby = sl.getEntitiesOfClass(Player.class, getBoundingBox().inflate(30.0));
-        for (Player p : nearby) {
-            if (distanceToSqr(p) < VANISH_DIST_SQ) { vanish(sl, p); return; }
-            Vec3 look = p.getLookAngle();
-            Vec3 toMe = getEyePosition().subtract(p.getEyePosition()).normalize();
-            if (look.dot(toMe) > LOOK_DOT_THRESHOLD) { vanish(sl, p); return; }
+        // Spotted / too close → teleport behind the player and keep haunting
+        if (tpCooldown <= 0) {
+            List<Player> nearby = sl.getEntitiesOfClass(Player.class, getBoundingBox().inflate(30.0));
+            for (Player p : nearby) {
+                boolean tooClose = distanceToSqr(p) < FLEE_DIST_SQ;
+                Vec3 look = p.getLookAngle();
+                Vec3 toMe = getEyePosition().subtract(p.getEyePosition()).normalize();
+                boolean spotted = look.dot(toMe) > LOOK_DOT_THRESHOLD;
+                if ((tooClose || spotted) && p instanceof ServerPlayer sp) {
+                    teleportBehindPlayer(sl, sp, spotted);
+                    break;
+                }
+            }
         }
 
         // ── scripted speech ───────────────────────────────────────────────────
@@ -336,7 +343,11 @@ public class ReverieEntity extends PathfinderMob {
                         SoundEvents.WARDEN_ROAR, SoundSource.AMBIENT, 0.5f, 0.4f);
                 sl.sendParticles(ParticleTypes.SOUL,
                         tp.getX(), tp.getY() + 0.5, tp.getZ(), 30, 1.5, 1.0, 1.5, 0.05);
-                vanish(sl, tp);
+                // Haunting never ends — reset stage and continue
+                stage = 1;
+                stageTimer = 0;
+                whispered = false;
+                teleportBehindPlayer(sl, tp, false);
             }
         }
     }
@@ -533,6 +544,75 @@ public class ReverieEntity extends PathfinderMob {
                 getX(), getY() + 0.3, getZ(), 4, 0.3, 0.2, 0.3, 0.01);
     }
 
+    // ──────────────────────────── teleport ────────────────────────────────────
+
+    /**
+     * Teleports The Reverie to a position behind the player.
+     * Called whenever spotted (looked at), approached too closely, attacked,
+     * or when the stage-3 loop resets.  The entity never truly leaves — it
+     * just slips to where the player cannot see it.
+     */
+    private void teleportBehindPlayer(ServerLevel sl, ServerPlayer tp, boolean spotted) {
+        // Particles/sound at the old position — it "blinks out"
+        sl.sendParticles(ParticleTypes.SOUL,
+                getX(), getY() + 1.0, getZ(), 8, 0.3, 0.4, 0.3, 0.04);
+        sl.sendParticles(ParticleTypes.SMOKE,
+                getX(), getY() + 0.5, getZ(), 5, 0.2, 0.2, 0.2, 0.01);
+        sl.playSound(null, getX(), getY(), getZ(),
+                SoundEvents.SCULK_BLOCK_CHARGE, SoundSource.AMBIENT, 0.4f, 0.25f);
+
+        BlockPos dest = findBehindPos(sl, tp);
+        if (dest != null) {
+            teleportTo(dest.getX() + 0.5, dest.getY(), dest.getZ() + 0.5);
+        }
+
+        // Soft sound at new position — barely audible, just enough to unsettle
+        sl.playSound(null, getX(), getY(), getZ(),
+                SoundEvents.AMBIENT_CAVE, SoundSource.AMBIENT, 0.15f, 0.35f);
+        sl.sendParticles(ParticleTypes.SOUL,
+                getX(), getY() + 1.0, getZ(), 3, 0.2, 0.3, 0.2, 0.02);
+
+        if (spotted) {
+            String[] msgs = {
+                "§8§o...you saw nothing.",
+                "§8§o...it was never there.",
+                "§8§oyour eyes are failing you.",
+                "§8§o...blink.  try again.",
+                "§8§o...it moved while you looked.",
+            };
+            tp.displayClientMessage(Component.literal(
+                    msgs[sl.getRandom().nextInt(msgs.length)]), true);
+        }
+
+        tpCooldown = TELEPORT_COOLDOWN;
+    }
+
+    /**
+     * Finds a clear block position behind the player — 10–18 blocks away
+     * in the direction opposite to where the player is looking.
+     */
+    private BlockPos findBehindPos(ServerLevel sl, ServerPlayer tp) {
+        Vec3 look = tp.getLookAngle();
+        for (int attempt = 0; attempt < 25; attempt++) {
+            double dist = 10.0 + sl.getRandom().nextDouble() * 8.0;
+            double bx = tp.getX() - look.x * dist + (sl.getRandom().nextDouble() - 0.5) * 3.0;
+            double bz = tp.getZ() - look.z * dist + (sl.getRandom().nextDouble() - 0.5) * 3.0;
+            int tx = (int) Math.floor(bx);
+            int tz = (int) Math.floor(bz);
+            int ty = (int) tp.getY();
+            for (int dy = 4; dy >= -8; dy--) {
+                BlockPos ground = new BlockPos(tx, ty + dy, tz);
+                BlockPos above  = ground.above();
+                if (!sl.getBlockState(ground).isAir()
+                        && sl.getBlockState(above).isAir()
+                        && sl.getBlockState(above.above()).isAir()) {
+                    return above;
+                }
+            }
+        }
+        return null; // if no clear spot found, stay put this tick
+    }
+
     // ─────────────────────────────── vanish ───────────────────────────────────
 
     private void vanish(ServerLevel sl, Player trigger) {
@@ -567,8 +647,11 @@ public class ReverieEntity extends PathfinderMob {
 
     @Override
     public boolean hurtServer(ServerLevel level, DamageSource source, float amount) {
-        Player attacker = (source.getEntity() instanceof Player p) ? p : null;
-        vanish(level, attacker);
+        // Not real — it cannot be harmed, only relocates
+        if (source.getEntity() instanceof ServerPlayer sp) {
+            teleportBehindPlayer(level, sp, false);
+            sp.sendSystemMessage(Component.literal("§8§o...you can't touch it."));
+        }
         return false;
     }
 
