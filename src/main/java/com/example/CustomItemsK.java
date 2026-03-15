@@ -1790,28 +1790,36 @@ public class CustomItemsK implements ModInitializer {
                 Commands.literal("spawnreverie")
                     .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                     .then(Commands.argument("target", EntityArgument.player())
-                        .executes(ctx -> {
-                            ServerPlayer target = EntityArgument.getPlayer(ctx, "target");
-                            ServerLevel sl = (ServerLevel) target.level();
-                            BlockPos spawnPos = findReveriePos(sl, target);
-                            if (spawnPos == null) {
-                                ctx.getSource().sendFailure(Component.literal(
-                                        "No safe spawn position found near "
-                                        + target.getName().getString()));
-                                return 0;
-                            }
-                            ReverieEntity reverie = new ReverieEntity(ReverieEntity.TYPE, sl);
-                            reverie.setPos(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
-                            reverie.stage = 1;
-                            reverie.targetPlayerUUID = target.getUUID();
-                            sl.addFreshEntity(reverie);
-                            ctx.getSource().sendSuccess(() -> Component.literal(
-                                    "§5Spawned §dThe Reverie §5near §f"
-                                    + target.getName().getString()), true);
-                            return 1;
-                        }))
+                        // /spawnreverie <target> — spawns at stage 1
+                        .executes(ctx -> spawnReverieAt(ctx, 1))
+                        // /spawnreverie <target> <stage> — spawns at given stage (1-3)
+                        .then(Commands.argument("stage", IntegerArgumentType.integer(1, 3))
+                            .executes(ctx -> spawnReverieAt(ctx,
+                                IntegerArgumentType.getInteger(ctx, "stage")))))
             )
         );
+    }
+
+    private static int spawnReverieAt(com.mojang.brigadier.context.CommandContext<net.minecraft.commands.CommandSourceStack> ctx, int stage) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
+        ServerPlayer target = EntityArgument.getPlayer(ctx, "target");
+        ServerLevel sl = (ServerLevel) target.level();
+        BlockPos spawnPos = findReveriePos(sl, target);
+        if (spawnPos == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "No safe spawn position found near "
+                    + target.getName().getString()));
+            return 0;
+        }
+        ReverieEntity reverie = new ReverieEntity(ReverieEntity.TYPE, sl);
+        reverie.setPos(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
+        reverie.stage = Math.max(1, Math.min(3, stage));
+        reverie.targetPlayerUUID = target.getUUID();
+        sl.addFreshEntity(reverie);
+        final int finalStage = reverie.stage;
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "§5Spawned §dThe Reverie §7(stage " + finalStage + ")§5 near §f"
+                + target.getName().getString()), true);
+        return 1;
     }
 
     /**

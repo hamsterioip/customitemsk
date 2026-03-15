@@ -24,19 +24,21 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * The Reverie — a hallucination that emerges from sleep deprivation.
+ * The Reverie — a hallucination born from sleep deprivation.
  *
- * Spawns when the player hasn't slept in ≥ 72,000 ticks (3 in-game days).
- * Never physically attacks — only degrades the player's mental state:
- * Hunger, Nausea, Slowness, Mining Fatigue, Weakness.
+ * Spawns when the player hasn't slept in >= 72,000 ticks (3 in-game days).
+ * Never physically attacks. Instead it dismantles the player's perception:
  *
- * Always invulnerable — vanishes when spotted or approached.
- * Vanishes if the player sleeps (timeSinceRest resets).
+ *  • Footsteps that play from BEHIND the player with no source
+ *  • Fake mob sounds (zombie, enderman, creeper) at the player's own ears
+ *  • Chat-level paranoid messages that look like server/player messages
+ *  • Periodic Darkness pulses and full-screen Nausea
+ *  • Hunger drain, Slowness, Mining Fatigue, Weakness at stage 3
  *
- * Three stages (auto-advance every 300 ticks while target is within 40 blocks):
- *  Stage 1: Distant, barely visible, quiet whispers about sleeplessness.
- *  Stage 2: Closer, periodic mental attack (Hunger + Nausea), messages about unreality.
- *  Stage 3: Very close, full mental degradation, then force-vanishes with "...SLEEP."
+ * Stage 1: Distant, occasional whispers, faint footsteps behind you.
+ * Stage 2: Mental attacks begin, paranoid chat messages, hallucination sounds,
+ *           creeper hiss with no creeper, breathing on your neck.
+ * Stage 3: Full psychological assault. Ends with "...SLEEP." then vanishes.
  */
 public class ReverieEntity extends PathfinderMob {
 
@@ -58,6 +60,9 @@ public class ReverieEntity extends PathfinderMob {
     private int  ambientTimer       = 0;
     private int  mentalAttackTimer  = 0;
     private int  hallucinationTimer = 0;
+    private int  paranoidTimer      = 0;   // footsteps + behind-sounds
+    private int  chatParanoidTimer  = 0;   // fake chat messages
+    private int  darknessTimer      = 0;   // random darkness pulses
     private boolean spawnSoundPlayed = false;
     private boolean whispered        = false;
 
@@ -75,7 +80,7 @@ public class ReverieEntity extends PathfinderMob {
 
     @Override
     protected void registerGoals() {
-        // No goals — The Reverie never pathfinds. It is not real.
+        // No goals — The Reverie is not real.
     }
 
     // ──────────────────────────────────── tick ────────────────────────────────
@@ -90,6 +95,9 @@ public class ReverieEntity extends PathfinderMob {
         ambientTimer--;
         if (mentalAttackTimer  > 0) mentalAttackTimer--;
         if (hallucinationTimer > 0) hallucinationTimer--;
+        if (paranoidTimer      > 0) paranoidTimer--;
+        if (chatParanoidTimer  > 0) chatParanoidTimer--;
+        if (darknessTimer      > 0) darknessTimer--;
 
         ServerLevel sl = (ServerLevel) level();
 
@@ -100,7 +108,7 @@ public class ReverieEntity extends PathfinderMob {
             playSpawnSound(sl);
         }
 
-        // Always face target
+        // Always face the target
         ServerPlayer target = getTargetPlayer(sl);
         if (target != null) {
             double dx  = target.getX() - getX();
@@ -113,7 +121,6 @@ public class ReverieEntity extends PathfinderMob {
             setXRot(pit);
         }
 
-        // Ambient particles
         emitAmbientParticles(sl);
 
         if (lifeTicks < 40) return;
@@ -124,23 +131,20 @@ public class ReverieEntity extends PathfinderMob {
             whisper(sl, target, "§8§o...when did you last sleep?");
         }
 
-        // Stage advancement — every 300 ticks while target is within 40 blocks
+        // Stage advancement
         if (target != null && distanceTo(target) < 40.0 && stage < 3 && stageTimer >= STAGE_ADVANCE_TICKS) {
             stageTimer = 0;
             stage++;
             onStageAdvance(sl, target);
         }
 
-        // Vanish if player slept (timeSinceRest reset)
+        // Vanish if player slept
         if (target != null) {
             int timeSinceRest = target.getStats().getValue(Stats.CUSTOM.get(Stats.TIME_SINCE_REST));
-            if (timeSinceRest < SLEEP_THRESHOLD) {
-                vanish(sl, target);
-                return;
-            }
+            if (timeSinceRest < SLEEP_THRESHOLD) { vanish(sl, target); return; }
         }
 
-        // Look-detection and proximity vanish (always — The Reverie never attacks)
+        // Vanish detection: look or proximity
         List<Player> nearby = sl.getEntitiesOfClass(Player.class, getBoundingBox().inflate(30.0));
         for (Player p : nearby) {
             if (distanceToSqr(p) < VANISH_DIST_SQ) { vanish(sl, p); return; }
@@ -149,32 +153,53 @@ public class ReverieEntity extends PathfinderMob {
             if (look.dot(toMe) > LOOK_DOT_THRESHOLD) { vanish(sl, p); return; }
         }
 
-        // Timed stage speech
+        // ── scripted speech ───────────────────────────────────────────────────
         playTimedSpeech(sl, target);
 
-        // Mental attack at stage 2+ (periodic, no HP damage)
+        // ── mental attack (stage 2+) ──────────────────────────────────────────
         if (stage >= 2 && mentalAttackTimer <= 0 && target != null && distanceTo(target) < 40.0) {
             doMentalAttack(sl, target);
             mentalAttackTimer = (stage >= 3) ? 120 : 200;
         }
 
-        // Hallucination sounds from player's own position
-        if (stage >= 2 && hallucinationTimer <= 0 && target != null) {
-            if (sl.getRandom().nextInt(3) == 0) playHallucinationSounds(sl, target);
-            hallucinationTimer = 160 + sl.getRandom().nextInt(80);
+        // ── paranoid footstep / behind-sounds (all stages) ───────────────────
+        if (paranoidTimer <= 0 && target != null) {
+            playParanoidSounds(sl, target);
+            paranoidTimer = 80 + sl.getRandom().nextInt(100); // every 4–9 s
         }
 
-        // Ambient sounds
+        // ── hallucination mob sounds (stage 2+) ───────────────────────────────
+        if (stage >= 2 && hallucinationTimer <= 0 && target != null) {
+            if (sl.getRandom().nextInt(3) == 0) playHallucinationSounds(sl, target);
+            hallucinationTimer = 120 + sl.getRandom().nextInt(80);
+        }
+
+        // ── paranoid chat messages (stage 2+) ─────────────────────────────────
+        if (stage >= 2 && chatParanoidTimer <= 0 && target != null) {
+            if (sl.getRandom().nextInt(2) == 0) playParanoidChat(sl, target);
+            chatParanoidTimer = 200 + sl.getRandom().nextInt(200);
+        }
+
+        // ── random darkness pulses (stage 2+) ─────────────────────────────────
+        if (stage >= 2 && darknessTimer <= 0 && target != null) {
+            if (sl.getRandom().nextInt(3) == 0) {
+                target.addEffect(new MobEffectInstance(MobEffects.DARKNESS, 40, 0, false, false));
+                sl.playSound(null, target.getX(), target.getY(), target.getZ(),
+                        SoundEvents.SCULK_BLOCK_CHARGE, SoundSource.AMBIENT, 0.4f, 0.1f);
+            }
+            darknessTimer = 80 + sl.getRandom().nextInt(80);
+        }
+
+        // ── ambient sounds ─────────────────────────────────────────────────────
         if (ambientTimer <= 0) {
             playAmbientSounds(sl, target);
             ambientTimer = calculateAmbientInterval();
         }
     }
 
-    // ─────────────────────────── particles ───────────────────────────────────
+    // ─────────────────────────────── particles ────────────────────────────────
 
     private void emitAmbientParticles(ServerLevel sl) {
-        // Faint smoke wisps — a form that is barely holding together
         if (lifeTicks % 8 == 0) {
             double ox = (sl.getRandom().nextDouble() - 0.5) * 2.0;
             double oz = (sl.getRandom().nextDouble() - 0.5) * 2.0;
@@ -182,7 +207,6 @@ public class ReverieEntity extends PathfinderMob {
                     getX() + ox, getY() + 0.5 + sl.getRandom().nextDouble() * 1.5, getZ() + oz,
                     1, 0.1, 0.1, 0.1, 0.002);
         }
-        // Stage 2+: soul particles — the exhausted mind made manifest
         if (stage >= 2 && lifeTicks % 12 == 0 && sl.getRandom().nextInt(3) == 0) {
             sl.sendParticles(ParticleTypes.SOUL,
                     getX() + (sl.getRandom().nextDouble() - 0.5) * 1.5,
@@ -190,7 +214,6 @@ public class ReverieEntity extends PathfinderMob {
                     getZ() + (sl.getRandom().nextDouble() - 0.5) * 1.5,
                     1, 0.05, 0.1, 0.05, 0.01);
         }
-        // Stage 3: end rods — the hallucination is fragmenting
         if (stage >= 3 && lifeTicks % 10 == 0 && sl.getRandom().nextInt(2) == 0) {
             sl.sendParticles(ParticleTypes.END_ROD,
                     getX() + (sl.getRandom().nextDouble() - 0.5) * 0.8,
@@ -200,7 +223,7 @@ public class ReverieEntity extends PathfinderMob {
         }
     }
 
-    // ──────────────────────── stage advancement ──────────────────────────────
+    // ──────────────────────────── stage advance ───────────────────────────────
 
     private void onStageAdvance(ServerLevel sl, ServerPlayer tp) {
         switch (stage) {
@@ -209,8 +232,7 @@ public class ReverieEntity extends PathfinderMob {
                         SoundEvents.SCULK_BLOCK_CHARGE, SoundSource.AMBIENT, 0.6f, 0.3f);
                 sl.sendParticles(ParticleTypes.SOUL,
                         getX(), getY() + 1.0, getZ(), 12, 0.4, 0.6, 0.4, 0.03);
-                tp.displayClientMessage(
-                        Component.literal("§8§o...it's getting closer."), true);
+                tp.displayClientMessage(Component.literal("§8§o...it's getting closer."), true);
             }
             case 3 -> {
                 sl.playSound(null, getX(), getY(), getZ(),
@@ -219,14 +241,14 @@ public class ReverieEntity extends PathfinderMob {
                         getX(), getY() + 1.0, getZ(), 25, 0.6, 0.8, 0.6, 0.05);
                 sl.sendParticles(ParticleTypes.END_ROD,
                         getX(), getY() + 1.0, getZ(), 10, 0.4, 0.6, 0.4, 0.04);
-                tp.addEffect(new MobEffectInstance(MobEffects.NAUSEA, 40, 0, false, false));
-                tp.displayClientMessage(
-                        Component.literal("§8§o...none of this is real."), true);
+                tp.addEffect(new MobEffectInstance(MobEffects.NAUSEA, 60, 0, false, false));
+                tp.addEffect(new MobEffectInstance(MobEffects.DARKNESS, 40, 0, false, false));
+                tp.displayClientMessage(Component.literal("§8§o...none of this is real."), true);
             }
         }
     }
 
-    // ────────────────────────────── speech ───────────────────────────────────
+    // ─────────────────────────────── speech ──────────────────────────────────
 
     private void whisper(ServerLevel sl, ServerPlayer tp, String msg) {
         if (tp != null) {
@@ -249,6 +271,11 @@ public class ReverieEntity extends PathfinderMob {
                         Component.literal("§8§o...three days. Has it been three days?"), true);
                 sl.playSound(null, ex, ey, ez,
                         SoundEvents.AMBIENT_CAVE, SoundSource.AMBIENT, 0.2f, 0.25f);
+            } else if (stageTimer == 260) {
+                // Fake footstep directly at the player — stage 1 teaser
+                tp.displayClientMessage(
+                        Component.literal("§8§o...something is behind you."), true);
+                playBehindFootstep(sl, tp, 4.0);
             }
         } else if (stage == 2) {
             if (stageTimer == 60) {
@@ -256,16 +283,25 @@ public class ReverieEntity extends PathfinderMob {
                         Component.literal("§8§o...the ground moves when you aren't watching."), true);
                 sl.playSound(null, ex, ey, ez,
                         SoundEvents.SCULK_BLOCK_CHARGE, SoundSource.AMBIENT, 0.4f, 0.35f);
-            } else if (stageTimer == 140) {
+            } else if (stageTimer == 130) {
                 tp.displayClientMessage(
                         Component.literal("§8§o...I am not really here.  Neither are you."), true);
-                sl.playSound(null, ex, ey, ez,
-                        SoundEvents.AMBIENT_CAVE, SoundSource.AMBIENT, 0.3f, 0.2f);
-            } else if (stageTimer == 240) {
+                // Breathing sound directly at the player's ear — right next to them
+                sl.playSound(null, tp.getX(), tp.getY(), tp.getZ(),
+                        SoundEvents.WARDEN_NEARBY_CLOSER, SoundSource.AMBIENT, 0.4f, 0.5f);
+            } else if (stageTimer == 210) {
                 tp.displayClientMessage(
                         Component.literal("§8§oYou built this.  Every block.  Every night without rest."), true);
                 sl.playSound(null, tp.getX(), tp.getY(), tp.getZ(),
                         SoundEvents.WARDEN_HEARTBEAT, SoundSource.AMBIENT, 0.4f, 0.7f);
+            } else if (stageTimer == 270) {
+                // Creeper hiss right next to the player — no actual creeper
+                tp.displayClientMessage(Component.literal("§8§o...did you hear that?"), true);
+                sl.playSound(null, tp.getX() + (sl.getRandom().nextDouble() - 0.5) * 3,
+                        tp.getY(), tp.getZ() + (sl.getRandom().nextDouble() - 0.5) * 3,
+                        SoundEvents.CREEPER_PRIMED, SoundSource.HOSTILE, 0.8f, 1.0f);
+                // Brief darkness — like blinking
+                tp.addEffect(new MobEffectInstance(MobEffects.DARKNESS, 20, 0, false, false));
             }
         } else if (stage >= 3) {
             if (stageTimer == 40) {
@@ -275,63 +311,188 @@ public class ReverieEntity extends PathfinderMob {
                         SoundEvents.WARDEN_HEARTBEAT, SoundSource.AMBIENT, 0.6f, 0.5f);
                 sl.sendParticles(ParticleTypes.SOUL,
                         tp.getX(), tp.getY() + 1, tp.getZ(), 20, 1.0, 0.5, 1.0, 0.05);
-            } else if (stageTimer == 100) {
+            } else if (stageTimer == 80) {
+                // Multiple footsteps closing in from behind — rapid sequence
+                tp.displayClientMessage(
+                        Component.literal("§4§o...it's right behind you."), true);
+                playApproachingFootsteps(sl, tp);
+            } else if (stageTimer == 120) {
                 tp.displayClientMessage(
                         Component.literal("§4§lCLOSE YOUR EYES.  THEY ARE ALREADY CLOSED."), true);
                 sl.playSound(null, tp.getX(), tp.getY(), tp.getZ(),
                         SoundEvents.SCULK_BLOCK_CHARGE, SoundSource.AMBIENT, 0.7f, 0.2f);
-                tp.addEffect(new MobEffectInstance(MobEffects.DARKNESS, 30, 0, false, false));
-            } else if (stageTimer == 180) {
+                tp.addEffect(new MobEffectInstance(MobEffects.DARKNESS, 60, 0, false, false));
+                tp.addEffect(new MobEffectInstance(MobEffects.NAUSEA, 80, 0, false, false));
+            } else if (stageTimer == 160) {
+                // Enderman scream from behind — maximum paranoia
+                tp.displayClientMessage(
+                        Component.literal("§4§l§kX§r §4§lTURN AROUND§r §4§l§kX§r"), true);
+                sl.playSound(null, tp.getX(), tp.getY(), tp.getZ(),
+                        SoundEvents.ENDERMAN_SCREAM, SoundSource.HOSTILE, 1.0f, 0.7f);
+                tp.addEffect(new MobEffectInstance(MobEffects.DARKNESS, 40, 1, false, false));
+            } else if (stageTimer == 200) {
                 tp.displayClientMessage(Component.literal("§4§l...SLEEP."), true);
                 sl.playSound(null, tp.getX(), tp.getY(), tp.getZ(),
                         SoundEvents.WARDEN_ROAR, SoundSource.AMBIENT, 0.5f, 0.4f);
                 sl.sendParticles(ParticleTypes.SOUL,
                         tp.getX(), tp.getY() + 0.5, tp.getZ(), 30, 1.5, 1.0, 1.5, 0.05);
-                // Hallucination completes — vanish
                 vanish(sl, tp);
             }
         }
     }
 
-    // ─────────────────────────── mental attack ───────────────────────────────
+    // ───────────────────── paranoid footstep effects ──────────────────────────
+
+    /**
+     * Plays footstep sounds from BEHIND the player — the core paranoia mechanic.
+     * When the player spins around, nothing is there.
+     */
+    private void playParanoidSounds(ServerLevel sl, ServerPlayer tp) {
+        switch (sl.getRandom().nextInt(stage >= 2 ? 5 : 3)) {
+            case 0 -> playBehindFootstep(sl, tp, 6.0 + sl.getRandom().nextDouble() * 6.0);
+            case 1 -> {
+                // Two footsteps in sequence — "crunch, crunch" from behind
+                playBehindFootstep(sl, tp, 8.0);
+                // Small delay isn't possible in a single tick, but two close positions simulate it
+                playBehindFootstep(sl, tp, 7.5);
+            }
+            case 2 -> {
+                // Footstep off to the side — player doesn't know which way to look
+                Vec3 look = tp.getLookAngle();
+                double bx = tp.getX() + look.z * 6.0 + (sl.getRandom().nextDouble() - 0.5) * 2;
+                double bz = tp.getZ() - look.x * 6.0 + (sl.getRandom().nextDouble() - 0.5) * 2;
+                sl.playSound(null, bx, tp.getY(), bz,
+                        SoundEvents.GRAVEL_STEP, SoundSource.AMBIENT, 0.5f, 0.8f);
+            }
+            case 3 -> {
+                // Something tripped on a block nearby
+                double ox = (sl.getRandom().nextDouble() - 0.5) * 10.0;
+                double oz = (sl.getRandom().nextDouble() - 0.5) * 10.0;
+                sl.playSound(null, tp.getX() + ox, tp.getY(), tp.getZ() + oz,
+                        SoundEvents.STONE_STEP, SoundSource.AMBIENT, 0.4f, 0.9f);
+            }
+            case 4 -> {
+                // Distant block breaking — something is digging
+                double ox = (sl.getRandom().nextDouble() - 0.5) * 12.0;
+                double oz = (sl.getRandom().nextDouble() - 0.5) * 12.0;
+                sl.playSound(null, tp.getX() + ox, tp.getY() - 1, tp.getZ() + oz,
+                        SoundEvents.STONE_BREAK, SoundSource.BLOCKS, 0.35f, 1.1f);
+            }
+        }
+    }
+
+    /** Places a single footstep sound at `dist` blocks behind the player. */
+    private void playBehindFootstep(ServerLevel sl, ServerPlayer tp, double dist) {
+        Vec3 look = tp.getLookAngle();
+        double bx = tp.getX() - look.x * dist + (sl.getRandom().nextDouble() - 0.5) * 1.5;
+        double by = tp.getY() + (sl.getRandom().nextDouble() - 0.5) * 0.5;
+        double bz = tp.getZ() - look.z * dist + (sl.getRandom().nextDouble() - 0.5) * 1.5;
+        // Alternate between gravel and wood — different surfaces make it believable
+        if (sl.getRandom().nextBoolean()) {
+            sl.playSound(null, bx, by, bz, SoundEvents.GRAVEL_STEP, SoundSource.AMBIENT, 0.55f, 0.85f);
+        } else {
+            sl.playSound(null, bx, by, bz, SoundEvents.WOOD_STEP,   SoundSource.AMBIENT, 0.5f,  0.9f);
+        }
+    }
+
+    /**
+     * Plays a rapid series of footsteps that seem to approach from behind.
+     * Used at stage 3 for maximum paranoia.
+     */
+    private void playApproachingFootsteps(ServerLevel sl, ServerPlayer tp) {
+        Vec3 look = tp.getLookAngle();
+        // Steps at 14, 10, 7, 4 blocks behind — closing in
+        for (double dist : new double[]{14.0, 10.0, 7.0, 4.0}) {
+            double bx = tp.getX() - look.x * dist + (sl.getRandom().nextDouble() - 0.5) * 1.0;
+            double bz = tp.getZ() - look.z * dist + (sl.getRandom().nextDouble() - 0.5) * 1.0;
+            sl.playSound(null, bx, tp.getY(), bz,
+                    SoundEvents.GRAVEL_STEP, SoundSource.AMBIENT, 0.6f, 0.8f);
+        }
+        // Sudden stop — the sound ends before reaching the player, so they never know
+        sl.playSound(null, tp.getX(), tp.getY(), tp.getZ(),
+                SoundEvents.WARDEN_NEARBY_CLOSER, SoundSource.AMBIENT, 0.3f, 0.4f);
+    }
+
+    // ──────────────────── hallucination mob sounds ────────────────────────────
+
+    /** Plays fake mob sounds at or near the player's own position. */
+    private void playHallucinationSounds(ServerLevel sl, ServerPlayer tp) {
+        double px = tp.getX(), py = tp.getY(), pz = tp.getZ();
+        // Slight offset so it doesn't sound exactly on the player
+        double ox = (sl.getRandom().nextDouble() - 0.5) * 4.0;
+        double oz = (sl.getRandom().nextDouble() - 0.5) * 4.0;
+        switch (sl.getRandom().nextInt(8)) {
+            case 0 -> sl.playSound(null, px + ox, py, pz + oz,
+                    SoundEvents.ZOMBIE_AMBIENT,    SoundSource.HOSTILE, 0.45f, 0.8f);
+            case 1 -> sl.playSound(null, px + ox, py, pz + oz,
+                    SoundEvents.SKELETON_AMBIENT,  SoundSource.HOSTILE, 0.4f,  0.9f);
+            case 2 -> sl.playSound(null, px, py, pz,
+                    SoundEvents.ENDERMAN_STARE,    SoundSource.HOSTILE, 0.35f, 0.6f);
+            case 3 -> sl.playSound(null, px + ox, py, pz + oz,
+                    SoundEvents.SPIDER_AMBIENT,    SoundSource.HOSTILE, 0.4f,  0.7f);
+            case 4 -> sl.playSound(null, px, py, pz,
+                    SoundEvents.AMBIENT_CAVE,      SoundSource.AMBIENT, 0.45f, 0.2f);
+            case 5 -> sl.playSound(null, px, py, pz,
+                    SoundEvents.SCULK_BLOCK_CHARGE, SoundSource.AMBIENT, 0.35f, 0.15f);
+            case 6 -> {
+                // Phantom flap right above them — they look up, nothing is there
+                sl.playSound(null, px + ox * 0.5, py + 3.0, pz + oz * 0.5,
+                        SoundEvents.PHANTOM_FLAP,      SoundSource.HOSTILE, 0.5f, 0.9f);
+            }
+            case 7 -> {
+                // Creeper fizz sound at ear level — no creeper
+                sl.playSound(null, px + ox, py, pz + oz,
+                        SoundEvents.CREEPER_PRIMED,    SoundSource.HOSTILE, 0.4f, 1.1f);
+            }
+        }
+    }
+
+    // ──────────────────── paranoid chat messages ──────────────────────────────
+
+    /**
+     * Sends messages that look like server or player chat — visible in the chat box,
+     * not just the actionbar.  Designed to make the player doubt what is real.
+     */
+    private void playParanoidChat(ServerLevel sl, ServerPlayer tp) {
+        // Stage-specific messages: stage 2 is subtle, stage 3 is overt
+        String[] stage2msgs = {
+            "§7§o[something moved behind you]",
+            "§8§oYou haven't slept in days.",
+            "§7§o[a sound nearby — you turn. nothing.]",
+            "§8§oYou're not sure how long you've been here.",
+            "§7§o[the walls look closer than they did]",
+            "§8§oIs that your heartbeat?",
+        };
+        String[] stage3msgs = {
+            "§4§o[IT IS STANDING BEHIND YOU]",
+            "§c§oDon't look. Don't look. Don't look.",
+            "§4§k... §r§4§oyou are not alone§4§k ...§r",
+            "§c§oThe torch counts are wrong. You placed more than that.",
+            "§4§lYOU CANNOT TRUST YOUR EYES.",
+            "§c§oSomething moved in your peripheral vision.",
+            "§4§k##§r §4§oyour inventory has changed §4§k##§r",
+        };
+        String[] pool = (stage >= 3) ? stage3msgs : stage2msgs;
+        String msg = pool[sl.getRandom().nextInt(pool.length)];
+        tp.sendSystemMessage(Component.literal(msg));
+    }
+
+    // ─────────────────────── mental attack ────────────────────────────────────
 
     /** Degrades the player's mental state — no HP damage, ever. */
     private void doMentalAttack(ServerLevel sl, ServerPlayer tp) {
-        // Always: hunger drains, screen warps
         tp.addEffect(new MobEffectInstance(MobEffects.HUNGER,  200, 1, false, false));
         tp.addEffect(new MobEffectInstance(MobEffects.NAUSEA,  100, 0, false, false));
-        // Stage 3: full degradation
         if (stage >= 3) {
-            tp.addEffect(new MobEffectInstance(MobEffects.SLOWNESS,       100, 1, false, false));
-            tp.addEffect(new MobEffectInstance(MobEffects.MINING_FATIGUE, 100, 0, false, false));
-            tp.addEffect(new MobEffectInstance(MobEffects.WEAKNESS,       100, 0, false, false));
+            tp.addEffect(new MobEffectInstance(MobEffects.SLOWNESS,        100, 1, false, false));
+            tp.addEffect(new MobEffectInstance(MobEffects.MINING_FATIGUE,  100, 0, false, false));
+            tp.addEffect(new MobEffectInstance(MobEffects.WEAKNESS,        100, 0, false, false));
         }
         sl.playSound(null, tp.getX(), tp.getY(), tp.getZ(),
                 SoundEvents.WARDEN_AMBIENT, SoundSource.AMBIENT, 0.5f, 0.3f);
     }
 
-    // ──────────────────────── hallucination sounds ───────────────────────────
-
-    /** Plays fake mob sounds at the PLAYER's position — manufactured by their exhausted mind. */
-    private void playHallucinationSounds(ServerLevel sl, ServerPlayer tp) {
-        double px = tp.getX(), py = tp.getY(), pz = tp.getZ();
-        switch (sl.getRandom().nextInt(6)) {
-            case 0 -> sl.playSound(null, px, py, pz,
-                    SoundEvents.ZOMBIE_AMBIENT,   SoundSource.HOSTILE, 0.4f, 0.8f);
-            case 1 -> sl.playSound(null, px, py, pz,
-                    SoundEvents.SKELETON_AMBIENT, SoundSource.HOSTILE, 0.35f, 0.9f);
-            case 2 -> sl.playSound(null, px, py, pz,
-                    SoundEvents.ENDERMAN_STARE,   SoundSource.HOSTILE, 0.3f, 0.6f);
-            case 3 -> sl.playSound(null, px, py, pz,
-                    SoundEvents.SPIDER_AMBIENT,   SoundSource.HOSTILE, 0.35f, 0.7f);
-            case 4 -> sl.playSound(null, px, py, pz,
-                    SoundEvents.AMBIENT_CAVE,     SoundSource.AMBIENT, 0.4f, 0.2f);
-            case 5 -> sl.playSound(null, px, py, pz,
-                    SoundEvents.SCULK_BLOCK_CHARGE, SoundSource.AMBIENT, 0.3f, 0.15f);
-        }
-    }
-
-    // ──────────────────────────── ambient sounds ─────────────────────────────
+    // ──────────────────────────── ambient sounds ──────────────────────────────
 
     private int calculateAmbientInterval() {
         return switch (stage) {
@@ -366,14 +527,13 @@ public class ReverieEntity extends PathfinderMob {
     }
 
     private void playSpawnSound(ServerLevel sl) {
-        // The Reverie simply materializes — no dramatic entrance
         sl.playSound(null, getX(), getY(), getZ(),
                 SoundEvents.AMBIENT_CAVE, SoundSource.AMBIENT, 0.3f, 0.2f);
         sl.sendParticles(ParticleTypes.SOUL,
                 getX(), getY() + 0.3, getZ(), 4, 0.3, 0.2, 0.3, 0.01);
     }
 
-    // ─────────────────────────────── vanish ──────────────────────────────────
+    // ─────────────────────────────── vanish ───────────────────────────────────
 
     private void vanish(ServerLevel sl, Player trigger) {
         sl.sendParticles(ParticleTypes.SOUL,
@@ -401,14 +561,12 @@ public class ReverieEntity extends PathfinderMob {
         discard();
     }
 
-    // ───────────────────────────── combat ────────────────────────────────────
+    // ───────────────────────────── combat ─────────────────────────────────────
 
-    @Override
-    public boolean isInvulnerable() { return true; }
+    @Override public boolean isInvulnerable() { return true; }
 
     @Override
     public boolean hurtServer(ServerLevel level, DamageSource source, float amount) {
-        // Always vanishes when hit — it is not real
         Player attacker = (source.getEntity() instanceof Player p) ? p : null;
         vanish(level, attacker);
         return false;
@@ -416,12 +574,11 @@ public class ReverieEntity extends PathfinderMob {
 
     @Override
     public boolean doHurtTarget(ServerLevel level, Entity target) {
-        // Mental effects only — never HP damage
         if (target instanceof ServerPlayer sp) doMentalAttack(level, sp);
         return true;
     }
 
-    // ─────────────────────────────── helpers ─────────────────────────────────
+    // ─────────────────────────────── helpers ──────────────────────────────────
 
     private ServerPlayer getTargetPlayer(ServerLevel sl) {
         if (targetPlayerUUID == null) return null;
