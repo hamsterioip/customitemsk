@@ -19,5 +19,9 @@
   "item.customitemsk.void_shard": "Void Shard",
   "entity.customitemsk.watcher": "The Watcher",
   "entity.customitemsk.hollow": "The Hollow",
-  "entity.customitemsk.reverie": "The Reverie"
+  "entity.customitemsk.reverie": "The Reverie",
+  "entity.customitemsk.changeling": "The Changeling",
+  "entity.customitemsk.mimic": "The Mimic",
+  "entity.customitemsk.stalker": "The Stalker",
+  "entity.customitemsk.forest_spirit": "Forest Spirit"
 }

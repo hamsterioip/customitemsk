@@ -73,16 +73,16 @@ public class ChangelingEntityRenderer
     // Texture paths indexed by DisguiseType ordinal (must stay in sync with
     // the enum order in ChangelingEntity).
     private static final Identifier[] DISGUISE_TEXTURES = {
-        Identifier.withDefaultNamespace("textures/entity/cow/cow.png"),           // 0 COW
-        Identifier.withDefaultNamespace("textures/entity/pig/pig.png"),           // 1 PIG
-        Identifier.withDefaultNamespace("textures/entity/sheep/sheep.png"),       // 2 SHEEP
-        Identifier.withDefaultNamespace("textures/entity/villager/villager.png"), // 3 VILLAGER
-        Identifier.withDefaultNamespace("textures/entity/chicken.png"),           // 4 CHICKEN
-        Identifier.withDefaultNamespace("textures/entity/rabbit/brown.png"),      // 5 RABBIT
-        Identifier.withDefaultNamespace("textures/entity/horse/horse_brown.png"), // 6 HORSE
-        Identifier.withDefaultNamespace("textures/entity/cat/tabby.png"),         // 7 CAT
-        Identifier.withDefaultNamespace("textures/entity/fox/fox.png"),           // 8 FOX
-        Identifier.withDefaultNamespace("textures/entity/cow/mooshroom.png"),     // 9 MOOSHROOM
+        Identifier.withDefaultNamespace("textures/entity/cow/temperate_cow.png"),      // 0 COW
+        Identifier.withDefaultNamespace("textures/entity/pig/temperate_pig.png"),      // 1 PIG
+        Identifier.withDefaultNamespace("textures/entity/sheep/sheep.png"),            // 2 SHEEP
+        Identifier.withDefaultNamespace("textures/entity/villager/villager.png"),      // 3 VILLAGER
+        Identifier.withDefaultNamespace("textures/entity/chicken/temperate_chicken.png"), // 4 CHICKEN
+        Identifier.withDefaultNamespace("textures/entity/rabbit/brown.png"),           // 5 RABBIT
+        Identifier.withDefaultNamespace("textures/entity/horse/horse_brown.png"),      // 6 HORSE
+        Identifier.withDefaultNamespace("textures/entity/cat/tabby.png"),              // 7 CAT
+        Identifier.withDefaultNamespace("textures/entity/fox/fox.png"),                // 8 FOX
+        Identifier.withDefaultNamespace("textures/entity/cow/red_mooshroom.png"),      // 9 MOOSHROOM
     };
 
     private static final Identifier TRUE_FORM_TEXTURE =

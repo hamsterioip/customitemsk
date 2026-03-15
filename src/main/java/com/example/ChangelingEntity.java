@@ -108,7 +108,10 @@ public class ChangelingEntity extends PathfinderMob {
     public ChangelingEntity(EntityType<? extends PathfinderMob> type, Level level) {
         super(type, level);
         this.setPersistenceRequired();
-        pickRandomDisguise();
+        // Only set the initial disguise server-side; clients receive it via synced data.
+        if (!level.isClientSide()) {
+            pickRandomDisguise();
+        }
     }
 
     @Override
@@ -463,13 +466,25 @@ public class ChangelingEntity extends PathfinderMob {
     private void pickRandomDisguise() {
         DisguiseType[] types = DisguiseType.values();
         currentDisguise = types[random.nextInt(types.length)];
-        entityData.set(DATA_DISGUISE_TYPE, currentDisguise.id);
+        if (!level().isClientSide()) {
+            entityData.set(DATA_DISGUISE_TYPE, currentDisguise.id);
+        }
     }
 
     private void changeDisguise(ServerLevel sl) {
-        DisguiseType oldDisguise = currentDisguise;
-        pickRandomDisguise();
-        
+        // Pick a disguise that is different from the current one
+        DisguiseType[] types = DisguiseType.values();
+        DisguiseType newDisguise;
+        int attempts = 0;
+        do {
+            newDisguise = types[random.nextInt(types.length)];
+        } while (newDisguise == currentDisguise && ++attempts < 20);
+        currentDisguise = newDisguise;
+        entityData.set(DATA_DISGUISE_TYPE, currentDisguise.id);
+
+        // Brief invisibility hides the one-frame model-swap glitch
+        addEffect(new MobEffectInstance(MobEffects.INVISIBILITY, 8, 0, false, false));
+
         sl.sendParticles(ParticleTypes.WITCH, getX(), getY() + 1, getZ(), 25, 0.4, 0.5, 0.4, 0.05);
     }
 
