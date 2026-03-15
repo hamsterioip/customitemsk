@@ -50,6 +50,9 @@ public class ReverieEntity extends PathfinderMob {
     private static final int    STAGE_ADVANCE_TICKS   = 300;
     private static final int    SLEEP_THRESHOLD       = 1000;
     private static final int    TELEPORT_COOLDOWN     = 60;
+    private static final double CREEP_DIST_START      = 18.0; // initial behind-distance
+    private static final double CREEP_DIST_MIN        = 5.5;  // closest it ever gets
+    private static final double CREEP_RATE            = 0.003;// blocks/tick it inches closer
 
     /** Current encounter stage (1–3). Auto-advances over time. */
     public int  stage            = 1;
@@ -64,9 +67,13 @@ public class ReverieEntity extends PathfinderMob {
     private int  paranoidTimer      = 0;   // footsteps + behind-sounds
     private int  chatParanoidTimer  = 0;   // fake chat messages
     private int  darknessTimer      = 0;   // random darkness pulses
-    private int  tpCooldown         = 0;   // prevent teleporting every tick when spotted
-    private boolean spawnSoundPlayed = false;
-    private boolean whispered        = false;
+    private int    tpCooldown         = 0;   // prevent teleporting every tick when spotted
+    private int    sleepDisplayTimer  = 2400;// countdown for sleep-deprivation reminder
+    private int    flickerTimer       = 300; // stage 1: controls when to briefly go invisible
+    private double creepDist          = CREEP_DIST_START; // behind-teleport distance
+    private int    spotCount          = 0;   // how many times player has caught a glimpse
+    private boolean spawnSoundPlayed  = false;
+    private boolean whispered         = false;
 
     public ReverieEntity(EntityType<? extends PathfinderMob> type, Level level) {
         super(type, level);
@@ -101,6 +108,8 @@ public class ReverieEntity extends PathfinderMob {
         if (chatParanoidTimer  > 0) chatParanoidTimer--;
         if (darknessTimer      > 0) darknessTimer--;
         if (tpCooldown         > 0) tpCooldown--;
+        if (sleepDisplayTimer  > 0) sleepDisplayTimer--;
+        if (flickerTimer       > 0) flickerTimer--;
 
         ServerLevel sl = (ServerLevel) level();
 
@@ -122,6 +131,13 @@ public class ReverieEntity extends PathfinderMob {
             setXRot(pit);
         }
 
+        // Stage 1 flicker — briefly go invisible to gaslight the player
+        if (stage == 1 && target != null && flickerTimer <= 0) {
+            addEffect(new MobEffectInstance(MobEffects.INVISIBILITY,
+                    4 + getRandom().nextInt(6), 0, false, false));
+            flickerTimer = 280 + getRandom().nextInt(240);
+        }
+
         emitAmbientParticles(sl);
 
         if (lifeTicks < 40) return;
@@ -139,10 +155,20 @@ public class ReverieEntity extends PathfinderMob {
             onStageAdvance(sl, target);
         }
 
-        // Vanish if player slept
+        // Vanish if player slept + sleep deprivation reminder
         if (target != null) {
             int timeSinceRest = target.getStats().getValue(Stats.CUSTOM.get(Stats.TIME_SINCE_REST));
             if (timeSinceRest < SLEEP_THRESHOLD) { vanish(sl, target); return; }
+            if (stage >= 2 && sleepDisplayTimer <= 0) {
+                int nights = timeSinceRest / 24000;
+                String sleepMsg;
+                if      (nights <= 0) sleepMsg = "§8§o...you should have slept by now.";
+                else if (nights == 1) sleepMsg = "§8§o...one night without rest.  It remembers.";
+                else if (nights == 2) sleepMsg = "§8§o...two nights.  It has been here since the first.";
+                else                  sleepMsg = "§8§o..." + nights + " nights.  Your mind is not yours anymore.";
+                target.displayClientMessage(Component.literal(sleepMsg), true);
+                sleepDisplayTimer = 2400 + sl.getRandom().nextInt(800);
+            }
         }
 
         // Spotted / too close → teleport behind the player and keep haunting
@@ -158,6 +184,20 @@ public class ReverieEntity extends PathfinderMob {
                     break;
                 }
             }
+        }
+
+        // Creep closer while player looks away — stage 2+
+        if (stage >= 2 && target != null) {
+            Vec3 lk = target.getLookAngle();
+            Vec3 toE = getEyePosition().subtract(target.getEyePosition()).normalize();
+            if (lk.dot(toE) <= LOOK_DOT_THRESHOLD && creepDist > CREEP_DIST_MIN) {
+                creepDist -= CREEP_RATE;
+            }
+        }
+
+        // Panic when it has crept within arm's reach at stage 3
+        if (stage >= 3 && creepDist <= CREEP_DIST_MIN + 0.05 && tpCooldown <= 0 && target != null) {
+            doPanicSequence(sl, target);
         }
 
         // ── scripted speech ───────────────────────────────────────────────────
@@ -233,8 +273,11 @@ public class ReverieEntity extends PathfinderMob {
     // ──────────────────────────── stage advance ───────────────────────────────
 
     private void onStageAdvance(ServerLevel sl, ServerPlayer tp) {
+        creepDist = CREEP_DIST_START;
         switch (stage) {
             case 2 -> {
+                removeEffect(MobEffects.INVISIBILITY);
+                flickerTimer = Integer.MAX_VALUE; // no more flicker at stage 2+
                 sl.playSound(null, getX(), getY(), getZ(),
                         SoundEvents.SCULK_BLOCK_CHARGE, SoundSource.AMBIENT, 0.6f, 0.3f);
                 sl.sendParticles(ParticleTypes.SOUL,
@@ -296,11 +339,25 @@ public class ReverieEntity extends PathfinderMob {
                 // Breathing sound directly at the player's ear — right next to them
                 sl.playSound(null, tp.getX(), tp.getY(), tp.getZ(),
                         SoundEvents.WARDEN_NEARBY_CLOSER, SoundSource.AMBIENT, 0.4f, 0.5f);
+            } else if (stageTimer == 170) {
+                tp.displayClientMessage(Component.literal("§8§o...something opened a door."), true);
+                sl.playSound(null,
+                        tp.getX() + (sl.getRandom().nextDouble() - 0.5) * 6,
+                        tp.getY(),
+                        tp.getZ() + (sl.getRandom().nextDouble() - 0.5) * 6,
+                        SoundEvents.WOODEN_DOOR_OPEN, SoundSource.BLOCKS, 0.6f, 0.9f);
             } else if (stageTimer == 210) {
                 tp.displayClientMessage(
                         Component.literal("§8§oYou built this.  Every block.  Every night without rest."), true);
                 sl.playSound(null, tp.getX(), tp.getY(), tp.getZ(),
                         SoundEvents.WARDEN_HEARTBEAT, SoundSource.AMBIENT, 0.4f, 0.7f);
+            } else if (stageTimer == 250) {
+                tp.displayClientMessage(Component.literal("§8§o...that was close."), true);
+                sl.playSound(null,
+                        tp.getX() + (sl.getRandom().nextDouble() - 0.5) * 2,
+                        tp.getY() + 1.0,
+                        tp.getZ() + (sl.getRandom().nextDouble() - 0.5) * 2,
+                        SoundEvents.ARROW_HIT_PLAYER, SoundSource.PLAYERS, 0.7f, 1.1f);
             } else if (stageTimer == 270) {
                 // Creeper hiss right next to the player — no actual creeper
                 tp.displayClientMessage(Component.literal("§8§o...did you hear that?"), true);
@@ -311,18 +368,35 @@ public class ReverieEntity extends PathfinderMob {
                 tp.addEffect(new MobEffectInstance(MobEffects.DARKNESS, 20, 0, false, false));
             }
         } else if (stage >= 3) {
-            if (stageTimer == 40) {
+            if (stageTimer == 20) {
+                tp.displayClientMessage(Component.literal("§4§o...breathe."), true);
+                sl.playSound(null, tp.getX(), tp.getY(), tp.getZ(),
+                        SoundEvents.WARDEN_NEARBY_CLOSER, SoundSource.AMBIENT, 0.3f, 0.4f);
+            } else if (stageTimer == 40) {
                 tp.displayClientMessage(
                         Component.literal("§4§lYOUR HANDS ARE NOT YOUR HANDS."), true);
                 sl.playSound(null, tp.getX(), tp.getY(), tp.getZ(),
                         SoundEvents.WARDEN_HEARTBEAT, SoundSource.AMBIENT, 0.6f, 0.5f);
                 sl.sendParticles(ParticleTypes.SOUL,
                         tp.getX(), tp.getY() + 1, tp.getZ(), 20, 1.0, 0.5, 1.0, 0.05);
+            } else if (stageTimer == 58) {
+                tp.displayClientMessage(
+                        Component.literal("§c§oWait.  Something moved in your inventory."), true);
+                sl.playSound(null, tp.getX(), tp.getY(), tp.getZ(),
+                        SoundEvents.ITEM_PICKUP, SoundSource.PLAYERS, 0.5f, 0.7f);
             } else if (stageTimer == 80) {
                 // Multiple footsteps closing in from behind — rapid sequence
                 tp.displayClientMessage(
                         Component.literal("§4§o...it's right behind you."), true);
                 playApproachingFootsteps(sl, tp);
+            } else if (stageTimer == 105) {
+                tp.displayClientMessage(
+                        Component.literal("§c§o...that sound was right next to you."), true);
+                sl.playSound(null,
+                        tp.getX() + (sl.getRandom().nextDouble() - 0.5) * 3,
+                        tp.getY(),
+                        tp.getZ() + (sl.getRandom().nextDouble() - 0.5) * 3,
+                        SoundEvents.TNT_PRIMED, SoundSource.BLOCKS, 0.45f, 1.2f);
             } else if (stageTimer == 120) {
                 tp.displayClientMessage(
                         Component.literal("§4§lCLOSE YOUR EYES.  THEY ARE ALREADY CLOSED."), true);
@@ -347,6 +421,8 @@ public class ReverieEntity extends PathfinderMob {
                 stage = 1;
                 stageTimer = 0;
                 whispered = false;
+                creepDist = CREEP_DIST_START;
+                flickerTimer = 300 + getRandom().nextInt(200);
                 teleportBehindPlayer(sl, tp, false);
             }
         }
@@ -432,7 +508,7 @@ public class ReverieEntity extends PathfinderMob {
         // Slight offset so it doesn't sound exactly on the player
         double ox = (sl.getRandom().nextDouble() - 0.5) * 4.0;
         double oz = (sl.getRandom().nextDouble() - 0.5) * 4.0;
-        switch (sl.getRandom().nextInt(8)) {
+        switch (sl.getRandom().nextInt(12)) {
             case 0 -> sl.playSound(null, px + ox, py, pz + oz,
                     SoundEvents.ZOMBIE_AMBIENT,    SoundSource.HOSTILE, 0.45f, 0.8f);
             case 1 -> sl.playSound(null, px + ox, py, pz + oz,
@@ -450,11 +526,20 @@ public class ReverieEntity extends PathfinderMob {
                 sl.playSound(null, px + ox * 0.5, py + 3.0, pz + oz * 0.5,
                         SoundEvents.PHANTOM_FLAP,      SoundSource.HOSTILE, 0.5f, 0.9f);
             }
-            case 7 -> {
-                // Creeper fizz sound at ear level — no creeper
+            case 7 -> sl.playSound(null, px + ox, py, pz + oz,
+                    SoundEvents.CREEPER_PRIMED,   SoundSource.HOSTILE, 0.4f, 1.1f);
+            case 8 -> // Arrow whiz past — as if someone fired at them
+                sl.playSound(null, px + ox * 0.5, py + 0.5, pz + oz * 0.5,
+                    SoundEvents.ARROW_HIT_PLAYER, SoundSource.PLAYERS, 0.5f, 1.0f);
+            case 9 -> // Item pickup at their ear — something took something
+                sl.playSound(null, px, py, pz,
+                    SoundEvents.ITEM_PICKUP,      SoundSource.PLAYERS, 0.6f, 0.8f);
+            case 10 -> // Door creak nearby — something just entered
                 sl.playSound(null, px + ox, py, pz + oz,
-                        SoundEvents.CREEPER_PRIMED,    SoundSource.HOSTILE, 0.4f, 1.1f);
-            }
+                    SoundEvents.WOODEN_DOOR_OPEN, SoundSource.BLOCKS,  0.5f, 0.85f);
+            case 11 -> // Distant TNT click — very quiet, like a trap being set
+                sl.playSound(null, px + ox * 2, py, pz + oz * 2,
+                    SoundEvents.TNT_PRIMED,       SoundSource.BLOCKS,  0.2f, 1.3f);
         }
     }
 
@@ -473,6 +558,10 @@ public class ReverieEntity extends PathfinderMob {
             "§8§oYou're not sure how long you've been here.",
             "§7§o[the walls look closer than they did]",
             "§8§oIs that your heartbeat?",
+            "§7§o[you counted your torches twice.  the number changed.]",
+            "§8§oThe shadows move when you look away.",
+            "§7§o[something breathed on your neck just now]",
+            "§8§oYou don't remember placing that block.",
         };
         String[] stage3msgs = {
             "§4§o[IT IS STANDING BEHIND YOU]",
@@ -482,6 +571,10 @@ public class ReverieEntity extends PathfinderMob {
             "§4§lYOU CANNOT TRUST YOUR EYES.",
             "§c§oSomething moved in your peripheral vision.",
             "§4§k##§r §4§oyour inventory has changed §4§k##§r",
+            "§c§oIt stepped closer while you were reading this.",
+            "§4§o[stop looking at the chat.  STOP LOOKING AT THE CHAT.]",
+            "§c§oYou can hear it breathing.  You always could.",
+            "§4§lIT IS NOT BEHIND YOU ANYMORE.",
         };
         String[] pool = (stage >= 3) ? stage3msgs : stage2msgs;
         String msg = pool[sl.getRandom().nextInt(pool.length)];
@@ -573,15 +666,30 @@ public class ReverieEntity extends PathfinderMob {
                 getX(), getY() + 1.0, getZ(), 3, 0.2, 0.3, 0.2, 0.02);
 
         if (spotted) {
-            String[] msgs = {
-                "§8§o...you saw nothing.",
-                "§8§o...it was never there.",
-                "§8§oyour eyes are failing you.",
-                "§8§o...blink.  try again.",
-                "§8§o...it moved while you looked.",
-            };
-            tp.displayClientMessage(Component.literal(
-                    msgs[sl.getRandom().nextInt(msgs.length)]), true);
+            spotCount++;
+            creepDist = CREEP_DIST_START; // reset approach when caught
+            String msg;
+            if (spotCount == 3)
+                msg = "§8§o...you keep looking.  it counts.";
+            else if (spotCount == 5)
+                msg = "§8§oEvery time you find it, it was already gone.";
+            else if (spotCount == 7)
+                msg = "§8§o..." + spotCount + " times.  It is not tiring.";
+            else if (spotCount >= 10 && stage >= 3) {
+                msg = "§4§l" + spotCount + " TIMES.";
+                tp.addEffect(new MobEffectInstance(MobEffects.DARKNESS, 60, 1, false, false));
+            } else {
+                String[] fallback = {
+                    "§8§o...you saw nothing.",
+                    "§8§o...it was never there.",
+                    "§8§oyour eyes are failing you.",
+                    "§8§o...blink.  try again.",
+                    "§8§o...it moved while you looked.",
+                    "§8§o...was it ever there?",
+                };
+                msg = fallback[sl.getRandom().nextInt(fallback.length)];
+            }
+            tp.displayClientMessage(Component.literal(msg), true);
         }
 
         tpCooldown = TELEPORT_COOLDOWN;
@@ -593,8 +701,10 @@ public class ReverieEntity extends PathfinderMob {
      */
     private BlockPos findBehindPos(ServerLevel sl, ServerPlayer tp) {
         Vec3 look = tp.getLookAngle();
+        double maxDist = creepDist;
+        double minDist = Math.max(CREEP_DIST_MIN, maxDist - 4.0);
         for (int attempt = 0; attempt < 25; attempt++) {
-            double dist = 10.0 + sl.getRandom().nextDouble() * 8.0;
+            double dist = minDist + sl.getRandom().nextDouble() * (maxDist - minDist);
             double bx = tp.getX() - look.x * dist + (sl.getRandom().nextDouble() - 0.5) * 3.0;
             double bz = tp.getZ() - look.z * dist + (sl.getRandom().nextDouble() - 0.5) * 3.0;
             int tx = (int) Math.floor(bx);
@@ -611,6 +721,29 @@ public class ReverieEntity extends PathfinderMob {
             }
         }
         return null; // if no clear spot found, stay put this tick
+    }
+
+    // ─────────────────────── panic sequence ───────────────────────────────────
+
+    /** Triggered when The Reverie has crept to arm's reach of the player's back. */
+    private void doPanicSequence(ServerLevel sl, ServerPlayer tp) {
+        tp.sendSystemMessage(Component.literal(
+                "§4§l§k!!§r §4§lIT IS RIGHT BEHIND YOU.§r §4§l§k!!§r"));
+        sl.playSound(null, getX(), getY(), getZ(),
+                SoundEvents.WARDEN_ROAR, SoundSource.HOSTILE, 1.0f, 0.5f);
+        sl.playSound(null, getX(), getY(), getZ(),
+                SoundEvents.ENDERMAN_SCREAM, SoundSource.HOSTILE, 0.8f, 0.4f);
+        tp.addEffect(new MobEffectInstance(MobEffects.DARKNESS,  80, 1, false, false));
+        tp.addEffect(new MobEffectInstance(MobEffects.NAUSEA,   120, 0, false, false));
+        tp.addEffect(new MobEffectInstance(MobEffects.SLOWNESS,  60, 2, false, false));
+        sl.sendParticles(ParticleTypes.SOUL,
+                getX(), getY() + 1.0, getZ(), 30, 0.5, 0.8, 0.5, 0.07);
+        sl.sendParticles(ParticleTypes.END_ROD,
+                getX(), getY() + 1.0, getZ(), 15, 0.3, 0.5, 0.3, 0.05);
+        sl.playSound(null, tp.getX(), tp.getY(), tp.getZ(),
+                SoundEvents.PLAYER_HURT, SoundSource.PLAYERS, 0.6f, 0.8f);
+        creepDist = CREEP_DIST_START;
+        teleportBehindPlayer(sl, tp, false);
     }
 
     // ─────────────────────────────── vanish ───────────────────────────────────
