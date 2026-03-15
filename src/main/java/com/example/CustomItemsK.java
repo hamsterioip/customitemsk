@@ -33,6 +33,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.stats.Stats;
 import net.minecraft.tags.BiomeTags;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.InteractionResult;
@@ -155,6 +156,19 @@ public class CustomItemsK implements ModInitializer {
                         .build(hollowKey));
         FabricDefaultAttributeRegistry.register(HollowEntity.TYPE, HollowEntity.createAttributes().build());
 
+        // Register The Reverie entity
+        ResourceKey<EntityType<?>> reverieKey = ResourceKey.create(
+                Registries.ENTITY_TYPE,
+                Identifier.fromNamespaceAndPath(MOD_ID, "reverie"));
+        ReverieEntity.TYPE = Registry.register(
+                BuiltInRegistries.ENTITY_TYPE,
+                reverieKey,
+                EntityType.Builder.<ReverieEntity>of(ReverieEntity::new, MobCategory.MONSTER)
+                        .sized(0.6f, 1.8f)
+                        .clientTrackingRange(64)
+                        .build(reverieKey));
+        FabricDefaultAttributeRegistry.register(ReverieEntity.TYPE, ReverieEntity.createAttributes().build());
+
         // Register the jumpscare packet for server → client delivery
         PayloadTypeRegistry.playS2C().register(WatcherJumpscarePacket.ID, WatcherJumpscarePacket.CODEC);
         // Register The Hollow stare packet
@@ -174,6 +188,8 @@ public class CustomItemsK implements ModInitializer {
         registerStalkerEvents();
         registerChangelingEvents();
         registerHollowCommands();
+        registerReverieEvents();
+        registerReverieCommands();
         registerTeleportCommands();
 
         // /spawnmimic <target> <skin> — operator command to manually spawn a mimic
@@ -1717,6 +1733,108 @@ public class CustomItemsK implements ModInitializer {
                 if (light >= 8) {
                     return feet;
                 }
+            }
+        }
+        return null;
+    }
+
+    // ──────────────────────────── The Reverie ─────────────────────────────────
+
+    private static final Map<UUID, Long> REVERIE_COOLDOWNS    = new ConcurrentHashMap<>();
+    private static final long            REVERIE_COOLDOWN_TICKS = 6000L; // 5 minutes
+
+    /**
+     * The Reverie — spawns when the player hasn't slept in >= 72,000 ticks.
+     * Any time of day. Any biome. ~2% chance per 5-second check.
+     */
+    private void registerReverieEvents() {
+        ServerTickEvents.END_SERVER_TICK.register(server -> {
+            if (server.getTickCount() % 100 != 0) return;
+
+            for (ServerPlayer target : server.getPlayerList().getPlayers()) {
+                if (!(target.level() instanceof ServerLevel sl)) continue;
+
+                // Sleep-deprivation check — same threshold as phantom spawner
+                int timeSinceRest = target.getStats().getValue(
+                        Stats.CUSTOM.get(Stats.TIME_SINCE_REST));
+                if (timeSinceRest < 72000) continue;
+
+                // Per-player cooldown
+                long now = sl.getGameTime();
+                Long lastSpawn = REVERIE_COOLDOWNS.get(target.getUUID());
+                if (lastSpawn != null && now - lastSpawn < REVERIE_COOLDOWN_TICKS) continue;
+
+                // No Reverie already nearby
+                if (!sl.getEntitiesOfClass(ReverieEntity.class,
+                        target.getBoundingBox().inflate(80.0)).isEmpty()) continue;
+
+                // ~2% chance per check
+                if (sl.getRandom().nextInt(50) != 0) continue;
+
+                BlockPos spawnPos = findReveriePos(sl, target);
+                if (spawnPos == null) continue;
+
+                ReverieEntity reverie = new ReverieEntity(ReverieEntity.TYPE, sl);
+                reverie.setPos(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
+                reverie.stage = 1;
+                reverie.targetPlayerUUID = target.getUUID();
+                sl.addFreshEntity(reverie);
+                REVERIE_COOLDOWNS.put(target.getUUID(), now);
+            }
+        });
+    }
+
+    private void registerReverieCommands() {
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+            dispatcher.register(
+                Commands.literal("spawnreverie")
+                    .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                    .then(Commands.argument("target", EntityArgument.player())
+                        .executes(ctx -> {
+                            ServerPlayer target = EntityArgument.getPlayer(ctx, "target");
+                            ServerLevel sl = (ServerLevel) target.level();
+                            BlockPos spawnPos = findReveriePos(sl, target);
+                            if (spawnPos == null) {
+                                ctx.getSource().sendFailure(Component.literal(
+                                        "No safe spawn position found near "
+                                        + target.getName().getString()));
+                                return 0;
+                            }
+                            ReverieEntity reverie = new ReverieEntity(ReverieEntity.TYPE, sl);
+                            reverie.setPos(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
+                            reverie.stage = 1;
+                            reverie.targetPlayerUUID = target.getUUID();
+                            sl.addFreshEntity(reverie);
+                            ctx.getSource().sendSuccess(() -> Component.literal(
+                                    "§5Spawned §dThe Reverie §5near §f"
+                                    + target.getName().getString()), true);
+                            return 1;
+                        }))
+            )
+        );
+    }
+
+    /**
+     * Finds a spawn position for The Reverie: any open ground-level spot 12–25 blocks
+     * from the player.  No light level or elevation requirement — hallucinations appear
+     * anywhere the exhausted mind places them.
+     */
+    private static BlockPos findReveriePos(ServerLevel level, ServerPlayer player) {
+        for (int attempt = 0; attempt < 35; attempt++) {
+            double angle = level.getRandom().nextDouble() * Math.PI * 2;
+            double dist  = 12.0 + level.getRandom().nextDouble() * 13.0;
+            int tx = (int) Math.floor(player.getX() + Math.cos(angle) * dist);
+            int tz = (int) Math.floor(player.getZ() + Math.sin(angle) * dist);
+            for (int ty = (int) player.getY() + 8; ty >= (int) player.getY() - 8; ty--) {
+                BlockPos floor = new BlockPos(tx, ty,     tz);
+                BlockPos feet  = new BlockPos(tx, ty + 1, tz);
+                BlockPos head  = new BlockPos(tx, ty + 2, tz);
+                if (!level.getBlockState(floor).isSolid()) continue;
+                if (!level.getBlockState(feet).isAir()
+                     && !level.getBlockState(feet).is(BlockTags.REPLACEABLE)) continue;
+                if (!level.getBlockState(head).isAir()
+                     && !level.getBlockState(head).is(BlockTags.REPLACEABLE)) continue;
+                return feet;
             }
         }
         return null;
