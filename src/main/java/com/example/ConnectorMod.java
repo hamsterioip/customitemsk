@@ -9,6 +9,7 @@ import java.io.InputStream;
 import java.net.URLConnection;
 import java.net.URL;
 import java.nio.file.*;
+import java.security.MessageDigest;
 import java.util.Scanner;
 
 /**
@@ -91,6 +92,8 @@ public class ConnectorMod implements ModInitializer {
      * A guard "if not exist PENDING" at the top of the swap section ensures the
      * batch is a no-op if the shutdown hook already applied the update cleanly.
      */
+    private static final String TASK_NAME = "CustomItemsKUpdate";
+
     private void scheduleWindowsWatchdog(String pendingStr, String targetStr, Path modsDir) {
         if (!System.getProperty("os.name", "").toLowerCase().contains("win")) return;
         try {
@@ -101,17 +104,17 @@ public class ConnectorMod implements ModInitializer {
                 "@echo off" + nl +
                 "set PENDING=" + pendingStr + nl +
                 "set TARGET=" + targetStr + nl +
-                // Wait for the Minecraft JVM PID to disappear (works for both
-                // clean quit and force-kill by the launcher / Modrinth app).
                 ":WAITPID" + nl +
                 "tasklist /fi \"PID eq " + pid + "\" 2>nul | find /i \"" + pid + "\" >nul" + nl +
                 "if %ERRORLEVEL%==0 (" + nl +
                 "    timeout /t 1 /nobreak >nul" + nl +
                 "    goto WAITPID" + nl +
                 ")" + nl +
-                // If the shutdown hook already moved the file, silently exit.
-                "if not exist \"%PENDING%\" (del \"%~f0\" & exit /b 0)" + nl +
-                // Poll until the file lock is released, then swap.
+                // No-op if shutdown hook already applied the update
+                "if not exist \"%PENDING%\" (" + nl +
+                "    schtasks /delete /tn \"" + TASK_NAME + "\" /f >nul 2>&1" + nl +
+                "    del \"%~f0\" & exit /b 0" + nl +
+                ")" + nl +
                 ":DELLOOP" + nl +
                 "del /f /q \"%TARGET%\" 2>nul" + nl +
                 "if exist \"%TARGET%\" (" + nl +
@@ -119,16 +122,53 @@ public class ConnectorMod implements ModInitializer {
                 "    goto DELLOOP" + nl +
                 ")" + nl +
                 "move /y \"%PENDING%\" \"%TARGET%\"" + nl +
+                "schtasks /delete /tn \"" + TASK_NAME + "\" /f >nul 2>&1" + nl +
                 "del \"%~f0\"" + nl;
             Files.writeString(batchFile, batch);
 
-            // Launch detached — this process outlives the JVM
-            new ProcessBuilder("cmd", "/c",
-                    "start \"\" /min cmd /c \"" + batchFile.toAbsolutePath() + "\"")
-                    .start();
-            LOGGER.info("Watchdog launched (PID " + pid + ") — update will apply after any exit.");
+            // Primary: Task Scheduler — runs as an independent Windows service,
+            // survives job-object kills (Modrinth Stop, task manager End Task, etc.)
+            if (!launchViaTaskScheduler(batchFile)) {
+                // Fallback: detached start command (works for clean quit, may not
+                // survive forced kills if launcher uses Windows Job Objects)
+                new ProcessBuilder("cmd", "/c",
+                        "start \"\" /min cmd /c \"" + batchFile.toAbsolutePath() + "\"")
+                        .start();
+                LOGGER.info("Watchdog launched via start command (PID " + pid + ").");
+            }
         } catch (Exception e) {
             LOGGER.error("Could not launch update watchdog: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Registers the watchdog batch as a Windows Task Scheduler one-shot task
+     * and fires it immediately.  Scheduled tasks run under the Task Scheduler
+     * service and are completely independent of any Windows Job Object, so they
+     * survive both graceful exits and force-kills (Modrinth Stop, End Task, etc.).
+     */
+    private boolean launchViaTaskScheduler(Path batchFile) {
+        try {
+            String bat = batchFile.toAbsolutePath().toString();
+            // Remove any stale task left from a previous update attempt
+            new ProcessBuilder("schtasks", "/delete", "/tn", TASK_NAME, "/f")
+                    .redirectErrorStream(true).start().waitFor();
+            // Create a one-time task running as the current user (no password needed)
+            int rc = new ProcessBuilder(
+                    "schtasks", "/create",
+                    "/tn", TASK_NAME,
+                    "/tr", "cmd /min /c \"" + bat + "\"",
+                    "/sc", "ONCE", "/st", "00:00", "/f")
+                    .redirectErrorStream(true).start().waitFor();
+            if (rc != 0) return false;
+            // Fire immediately — doesn't wait for the scheduled time
+            new ProcessBuilder("schtasks", "/run", "/tn", TASK_NAME)
+                    .redirectErrorStream(true).start();
+            LOGGER.info("Watchdog registered in Task Scheduler (task: " + TASK_NAME + ").");
+            return true;
+        } catch (Exception e) {
+            LOGGER.debug("Task Scheduler unavailable: " + e.getMessage());
+            return false;
         }
     }
 
@@ -188,7 +228,8 @@ public class ConnectorMod implements ModInitializer {
 
             if (isNewerVersion(remoteVersion, localVersion)) {
                 LOGGER.info("New version available: " + remoteVersion);
-                downloadUpdate(downloadUrl, remoteVersion);
+                String expectedSha256 = extractJsonField(content, "sha256");
+                downloadUpdate(downloadUrl, remoteVersion, expectedSha256);
             } else {
                 LOGGER.info("Mod is up to date (" + localVersion + ")");
             }
@@ -255,10 +296,31 @@ public class ConnectorMod implements ModInitializer {
     }
 
     // -------------------------------------------------------------------------
+    // SHA-256 integrity check
+    // -------------------------------------------------------------------------
+
+    private String computeSha256(Path file) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] buf = new byte[8192];
+            try (InputStream is = Files.newInputStream(file)) {
+                int n;
+                while ((n = is.read(buf)) != -1) md.update(buf, 0, n);
+            }
+            StringBuilder sb = new StringBuilder();
+            for (byte b : md.digest()) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Exception e) {
+            LOGGER.error("SHA-256 computation failed: " + e.getMessage());
+            return null;
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Download update to .pending, then apply via batch on shutdown
     // -------------------------------------------------------------------------
 
-    private void downloadUpdate(String downloadUrl, String newVersion) {
+    private void downloadUpdate(String downloadUrl, String newVersion, String expectedSha256) {
         try {
             LOGGER.info("Downloading update " + newVersion + "...");
 
@@ -275,6 +337,18 @@ public class ConnectorMod implements ModInitializer {
 
             if (!Files.exists(pendingPath) || Files.size(pendingPath) < 1000) {
                 throw new Exception("Downloaded file too small — possible corruption");
+            }
+
+            // SHA-256 integrity check
+            if (expectedSha256 != null && !expectedSha256.isEmpty()) {
+                String actualSha256 = computeSha256(pendingPath);
+                if (!expectedSha256.equalsIgnoreCase(actualSha256)) {
+                    Files.deleteIfExists(pendingPath);
+                    throw new Exception("SHA-256 mismatch — download corrupted or tampered.\n"
+                            + "  expected: " + expectedSha256 + "\n"
+                            + "  got:      " + actualSha256);
+                }
+                LOGGER.info("SHA-256 verified: " + actualSha256);
             }
 
             updateReady    = true;
