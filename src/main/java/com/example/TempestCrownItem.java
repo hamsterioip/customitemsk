@@ -49,14 +49,16 @@ public class TempestCrownItem extends Item {
     @Override
     public void inventoryTick(ItemStack stack, ServerLevel level, Entity entity, EquipmentSlot slot) {
         if (!(entity instanceof ServerPlayer player)) return;
-        if (slot != EquipmentSlot.MAINHAND && slot != EquipmentSlot.OFFHAND) return;
 
         UUID uuid = player.getUUID();
         long currentTime = level.getGameTime();
-        
-        // Check if player is wielding Tempest Reaver
-        boolean hasTempestReaver = player.getMainHandItem().getItem() == ModItems.TEMPEST_REAVER
-                || player.getOffhandItem().getItem() == ModItems.TEMPEST_REAVER;
+
+        // Check if player has Tempest Reaver anywhere in inventory
+        boolean hasTempestReaver = false;
+        var inv = player.getInventory();
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            if (inv.getItem(i).getItem() == ModItems.TEMPEST_REAVER) { hasTempestReaver = true; break; }
+        }
         
         // === PASSIVE ABILITIES (Always Active When Held) ===
         
@@ -217,10 +219,12 @@ public class TempestCrownItem extends Item {
         if (!(attacker instanceof ServerPlayer player)) return;
         if (!(player.level() instanceof ServerLevel level)) return;
         
-        // Check for Tempest Reaver
-        boolean hasTempestReaver = player.getMainHandItem().getItem() == ModItems.TEMPEST_REAVER
-                || player.getOffhandItem().getItem() == ModItems.TEMPEST_REAVER;
-        
+        // Check for Tempest Reaver anywhere in inventory
+        boolean hasTempestReaver = false;
+        var inv2 = player.getInventory();
+        for (int i = 0; i < inv2.getContainerSize(); i++) {
+            if (inv2.getItem(i).getItem() == ModItems.TEMPEST_REAVER) { hasTempestReaver = true; break; }
+        }
         if (!hasTempestReaver) return;
         
         // Thunder Strike - every hit has a chance to call lightning

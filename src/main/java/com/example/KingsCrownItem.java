@@ -16,8 +16,8 @@ public class KingsCrownItem extends Item {
 
     @Override
     public void inventoryTick(ItemStack stack, ServerLevel level, Entity entity, EquipmentSlot slot) {
-        if (slot == EquipmentSlot.HEAD && entity instanceof Player player) {
-            // Strength I — refreshed every tick so it never expires while worn
+        if (entity instanceof Player player) {
+            // Strength I — works from any inventory slot
             player.addEffect(new MobEffectInstance(MobEffects.STRENGTH, 60, 0, false, false, true));
         }
     }

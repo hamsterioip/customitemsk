@@ -8,8 +8,6 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
-import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
@@ -38,57 +36,34 @@ public class PhoenixEmberItem extends Item {
         super(props);
     }
 
-    /**
-     * Called every tick when the item is in the player's inventory.
-     * Activates when the player would die.
-     */
-    @Override
-    public void inventoryTick(ItemStack stack, ServerLevel level, Entity entity, EquipmentSlot slot) {
-        // Only tick for players in valid slots (main hand or off hand)
-        if (!(entity instanceof ServerPlayer player)) return;
-        if (slot != EquipmentSlot.MAINHAND && slot != EquipmentSlot.OFFHAND) return;
-
-        ServerLevel sl = level;
-        
-        // Check if player would die (health <= 0 but not already dead)
-        if (player.getHealth() <= 0 && !player.isDeadOrDying()) {
-            // Check cooldown
-            long currentTime = sl.getGameTime();
-            Long lastUsed = COOLDOWNS.get(player.getUUID());
-            
-            if (lastUsed != null && currentTime - lastUsed < COOLDOWN_TICKS) {
-                // On cooldown - let the player die
-                return;
-            }
-
-            // ACTIVATE PHOENIX EMBER!
-            activatePhoenixEmber(player, sl, stack);
-        }
-    }
-
-    private void activatePhoenixEmber(ServerPlayer player, ServerLevel sl, ItemStack stack) {
+    public static void activatePhoenixEmber(ServerPlayer player, ServerLevel sl, ItemStack stack) {
         // Record cooldown
         COOLDOWNS.put(player.getUUID(), sl.getGameTime());
 
-        // Cancel death by restoring health
-        player.setHealth(player.getMaxHealth() * 0.5f); // 50% health
+        // Totem-of-undying activation animation (event 35) — shows the fiery overlay on screen
+        sl.broadcastEntityEvent(player, (byte) 35);
 
-        // Clear fire if burning
+        // Cancel death by fully restoring health
+        player.setHealth(player.getMaxHealth()); // full heal
+
+        // Clear fire and all debuffs
         player.clearFire();
-
-        // Remove negative effects
         player.removeEffect(MobEffects.WITHER);
         player.removeEffect(MobEffects.POISON);
         player.removeEffect(MobEffects.WEAKNESS);
         player.removeEffect(MobEffects.SLOWNESS);
         player.removeEffect(MobEffects.BLINDNESS);
+        player.removeEffect(MobEffects.HUNGER);
+        player.removeEffect(MobEffects.LEVITATION);
+        player.removeEffect(MobEffects.DARKNESS);
 
-        // Apply powerful buffs for 10 seconds (200 ticks)
-        player.addEffect(new MobEffectInstance(MobEffects.RESISTANCE, 200, 2, false, true)); // Resistance III
-        player.addEffect(new MobEffectInstance(MobEffects.FIRE_RESISTANCE, 200, 0, false, true)); // Fire Resistance
-        player.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 200, 1, false, true)); // Regeneration II
-        player.addEffect(new MobEffectInstance(MobEffects.ABSORPTION, 200, 1, false, true)); // Absorption II (4 bonus hearts)
-        player.addEffect(new MobEffectInstance(MobEffects.STRENGTH, 100, 0, false, true)); // Strength I for 5 seconds
+        // BUFFED resurrection effects (20 seconds)
+        player.addEffect(new MobEffectInstance(MobEffects.RESISTANCE,     400, 3, false, true)); // Resistance IV — 20 s
+        player.addEffect(new MobEffectInstance(MobEffects.FIRE_RESISTANCE,400, 0, false, true)); // Fire Resistance — 20 s
+        player.addEffect(new MobEffectInstance(MobEffects.REGENERATION,   300, 2, false, true)); // Regeneration III — 15 s
+        player.addEffect(new MobEffectInstance(MobEffects.ABSORPTION,     400, 3, false, true)); // Absorption IV (8 hearts) — 20 s
+        player.addEffect(new MobEffectInstance(MobEffects.STRENGTH,       400, 2, false, true)); // Strength III — 20 s
+        player.addEffect(new MobEffectInstance(MobEffects.SPEED,          300, 1, false, true)); // Speed II — 15 s
 
         // Consume the ember
         stack.shrink(1);
@@ -152,7 +127,7 @@ public class PhoenixEmberItem extends Item {
 
         // Personal message to the saved player
         player.displayClientMessage(
-                Component.literal("§6§l🔥 PHOENIX REBIRTH! 🔥\n§eYou have been saved from death!"),
+                Component.literal("§6§l⚡ PHOENIX REBIRTH ⚡  §eYou rise from the ashes."),
                 false);
     }
 

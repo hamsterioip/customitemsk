@@ -508,5 +508,5 @@ public class ChangelingEntity extends PathfinderMob {
     @Override
     public boolean removeWhenFarAway(double distance) { return false; }
     @Override
-    public boolean shouldShowName() { return enraged || tamed; }
+    public boolean shouldShowName() { return enraged; }
 }

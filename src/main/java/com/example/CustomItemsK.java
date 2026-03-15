@@ -8,6 +8,8 @@ import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
+import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.fabricmc.fabric.api.event.player.UseItemCallback;
@@ -31,6 +33,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.stats.Stats;
@@ -51,6 +54,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.ResolvableProfile;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -190,6 +194,9 @@ public class CustomItemsK implements ModInitializer {
         registerHollowCommands();
         registerReverieEvents();
         registerReverieCommands();
+        registerRelicKeepEvents();
+        registerInventoryPassiveBuffs();
+        registerAmbientHorrorEvents();
         registerTeleportCommands();
 
         // /spawnmimic <target> <skin> — operator command to manually spawn a mimic
@@ -1157,30 +1164,88 @@ public class CustomItemsK implements ModInitializer {
         return level.clip(ctx).getType() == HitResult.Type.MISS;
     }
 
+    /** Prevents the every-Nth-hit proc from re-triggering on its own bonus damage. */
+    private static final java.util.Set<UUID> PROC_IN_FLIGHT = ConcurrentHashMap.newKeySet();
+
     /**
-     * Berserker's Fang — Blood Rush:
-     * When a player kills a mob while holding the fang, grant Speed I + Strength I for 4 seconds.
+     * Berserker's Fang — Blood Rush (on kill) + Berserker Strike (every 3rd hit).
+     * Sentinel's Charm — Sentinel Strike (every 4th hit).
+     * All procs activate whenever the item is anywhere in the player's inventory.
      */
     private void registerBerserkersFangEvents() {
         ServerLivingEntityEvents.AFTER_DAMAGE.register((entity, source, baseDamage, damage, killed) -> {
-            if (!killed) return;
             if (!(source.getEntity() instanceof Player player)) return;
-            ItemStack held = player.getMainHandItem();
-            if (!(held.getItem() instanceof BerserkersFangItem)) return;
             if (!(player.level() instanceof ServerLevel sl)) return;
+            if (PROC_IN_FLIGHT.contains(player.getUUID())) return; // prevent recursion from bonus damage
+            if (!(entity instanceof net.minecraft.world.entity.LivingEntity target)) return;
 
-            // Blood Rush: Speed I + Strength I for 4 seconds (80 ticks)
-            player.addEffect(new MobEffectInstance(MobEffects.SPEED,    80, 0, false, true));
-            player.addEffect(new MobEffectInstance(MobEffects.STRENGTH, 80, 0, false, true));
+            var inv = player.getInventory();
+            boolean hasFang  = false;
+            boolean hasCharm = false;
+            for (int i = 0; i < inv.getContainerSize(); i++) {
+                net.minecraft.world.item.Item it = inv.getItem(i).getItem();
+                if (it instanceof BerserkersFangItem)  hasFang  = true;
+                if (it instanceof SentinelsCharmItem)  hasCharm = true;
+            }
 
-            player.displayClientMessage(Component.literal("§c🩸 Blood Rush!"), true);
+            // ── Berserker's Fang ──────────────────────────────────────────────
+            if (hasFang) {
+                // Blood Rush: Speed + Strength on kill
+                if (killed) {
+                    player.addEffect(new MobEffectInstance(MobEffects.SPEED,    80, 0, false, true));
+                    player.addEffect(new MobEffectInstance(MobEffects.STRENGTH, 80, 0, false, true));
+                    player.displayClientMessage(Component.literal("§c🩸 Blood Rush!"), true);
+                    sl.sendParticles(ParticleTypes.CRIT,
+                            entity.getX(), entity.getY() + entity.getBbHeight() * 0.5, entity.getZ(),
+                            24, 0.6, 0.8, 0.6, 0.6);
+                    sl.playSound(null, entity.getX(), entity.getY(), entity.getZ(),
+                            SoundEvents.PLAYER_ATTACK_CRIT, SoundSource.PLAYERS, 1.0f, 0.6f);
+                }
+                // Berserker Strike: every 3rd hit → +40% bonus damage + shockwave
+                int fangCount = BerserkersFangItem.HIT_COUNTER.merge(player.getUUID(), 1, Integer::sum);
+                if (fangCount >= 3) {
+                    BerserkersFangItem.HIT_COUNTER.put(player.getUUID(), 0);
+                    float bonus = (float) player.getAttributeValue(Attributes.ATTACK_DAMAGE) * 0.40f;
+                    if (bonus > 0) {
+                        PROC_IN_FLIGHT.add(player.getUUID());
+                        target.hurt(target.damageSources().playerAttack(player), bonus);
+                        PROC_IN_FLIGHT.remove(player.getUUID());
+                    }
+                    sl.sendParticles(ParticleTypes.CRIT,
+                            target.getX(), target.getY() + target.getBbHeight() * 0.5, target.getZ(),
+                            20, 0.5, 0.7, 0.5, 0.5);
+                    for (int i = 0; i < 12; i++) {
+                        double a = (2 * Math.PI / 12) * i;
+                        sl.sendParticles(ParticleTypes.SWEEP_ATTACK,
+                                target.getX() + Math.cos(a) * 1.2, target.getY() + 0.5,
+                                target.getZ() + Math.sin(a) * 1.2, 1, 0, 0, 0, 0.01);
+                    }
+                    sl.playSound(null, target.getX(), target.getY(), target.getZ(),
+                            SoundEvents.PLAYER_ATTACK_SWEEP, SoundSource.PLAYERS, 1.0f, 0.8f);
+                    player.displayClientMessage(Component.literal("§c🔥 Berserker Strike!"), true);
+                }
+            }
 
-            // Red burst particles at kill location
-            sl.sendParticles(ParticleTypes.CRIT,
-                    entity.getX(), entity.getY() + entity.getBbHeight() * 0.5, entity.getZ(),
-                    24, 0.6, 0.8, 0.6, 0.6);
-            sl.playSound(null, entity.getX(), entity.getY(), entity.getZ(),
-                    SoundEvents.PLAYER_ATTACK_CRIT, SoundSource.PLAYERS, 1.0f, 0.6f);
+            // ── Sentinel's Charm ──────────────────────────────────────────────
+            if (hasCharm) {
+                // Sentinel Strike: every 4th hit → +25% bonus damage
+                int charmCount = SentinelsCharmItem.HIT_COUNTER.merge(player.getUUID(), 1, Integer::sum);
+                if (charmCount >= 4) {
+                    SentinelsCharmItem.HIT_COUNTER.put(player.getUUID(), 0);
+                    float bonus = (float) player.getAttributeValue(Attributes.ATTACK_DAMAGE) * 0.25f;
+                    if (bonus > 0) {
+                        PROC_IN_FLIGHT.add(player.getUUID());
+                        target.hurt(target.damageSources().playerAttack(player), bonus);
+                        PROC_IN_FLIGHT.remove(player.getUUID());
+                    }
+                    sl.sendParticles(ParticleTypes.CRIT,
+                            target.getX(), target.getY() + target.getBbHeight() * 0.5, target.getZ(),
+                            16, 0.4, 0.6, 0.4, 0.4);
+                    sl.playSound(null, target.getX(), target.getY(), target.getZ(),
+                            SoundEvents.PLAYER_ATTACK_CRIT, SoundSource.PLAYERS, 1.0f, 1.0f);
+                    player.displayClientMessage(Component.literal("§6⚔ Sentinel Strike!"), true);
+                }
+            }
         });
     }
 
@@ -1904,6 +1969,362 @@ public class CustomItemsK implements ModInitializer {
                 "§5Spawned §dThe Reverie §7(stage " + finalStage + ")§5 near §f"
                 + target.getName().getString()), true);
         return 1;
+    }
+
+    // ═══════════════════════ Ambient Horror Events ═════════════════════════════
+
+    private static final Map<UUID, Long>   HORROR_COOLDOWNS = new ConcurrentHashMap<>();
+    /** Pending torch-flicker restores: { ServerLevel, BlockPos, BlockState, restoreGameTime } */
+    private static final List<Object[]>    FLICKER_QUEUE    = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    private static final String[] HORROR_MESSAGES = {
+        "§8§o...something moved.",
+        "§8§o...did you hear that?",
+        "§8§o...you are not alone.",
+        "§8§o...the walls are breathing.",
+        "§8§o...footsteps.",
+        "§8§o...it's getting closer.",
+        "§4§o...it knows you're here.",
+        "§8§o...check behind you.",
+        "§8§o...was that always there?",
+        "§8§o...don't look up.",
+        "§8§o...the dark remembers you.",
+        "§4§o...it smiled when you weren't looking.",
+        "§8§o...you felt it before you heard it.",
+        "§8§o...three nights without sleep.",
+        "§4§o...close your eyes. It won't help.",
+        "§8§o...wrong turn.",
+        "§8§o...that was not the wind.",
+        "§4§o...it has been here longer than the world.",
+        "§8§o...you dug too deep.",
+        "§8§o...the silence is wrong.",
+    };
+
+    private void registerAmbientHorrorEvents() {
+        ServerTickEvents.END_SERVER_TICK.register(server -> {
+            // ── Restore flickered torches every tick ──────────────────────────
+            if (!FLICKER_QUEUE.isEmpty()) {
+                long now = server.overworld().getGameTime();
+                FLICKER_QUEUE.removeIf(task -> {
+                    if (now < (long) task[3]) return false;
+                    ((ServerLevel) task[0]).setBlock((BlockPos) task[1], (BlockState) task[2], 3);
+                    return true;
+                });
+            }
+
+            // ── Trigger events once every 5 seconds ──────────────────────────
+            if (server.getTickCount() % 100 != 0) return;
+
+            for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+                if (!(player.level() instanceof ServerLevel sl)) continue;
+                if (player.isSpectator() || player.isCreative()) continue;
+
+                long now = sl.getGameTime();
+                Long last = HORROR_COOLDOWNS.get(player.getUUID());
+                if (last != null && now - last < 1200L) continue; // 60 s cooldown per player
+
+                if (sl.getRandom().nextInt(3) != 0) continue; // ~33 % chance per check
+
+                HORROR_COOLDOWNS.put(player.getUUID(), now);
+                triggerHorrorEvent(player, sl);
+            }
+        });
+    }
+
+    private static void triggerHorrorEvent(ServerPlayer player, ServerLevel sl) {
+        boolean isNight      = sl.getDayTime() % 24000 > 13000;
+        boolean underground  = !sl.canSeeSky(player.blockPosition()) && player.getY() < 60;
+        boolean deep         = player.getY() < 20;
+
+        // Build a weighted event pool based on conditions
+        List<Integer> pool = new ArrayList<>();
+        pool.add(0); pool.add(0); pool.add(0); // whisper — 3 slots, always
+        pool.add(1); pool.add(1);               // fake mob sound — always
+        pool.add(6); pool.add(6);               // particle shadow — always
+        if (underground)            { pool.add(2); pool.add(2); } // fake footsteps
+        if (underground)            { pool.add(3); }              // torch flicker
+        if (isNight || underground) { pool.add(4); }              // ghost sound
+        if (deep)                   { pool.add(5); pool.add(5); } // deep dread
+
+        int event = pool.get(sl.getRandom().nextInt(pool.size()));
+        switch (event) {
+            case 0 -> horrorWhisper(player, sl);
+            case 1 -> horrorFakeMobSound(player, sl);
+            case 2 -> horrorFakeFootsteps(player, sl);
+            case 3 -> horrorTorchFlicker(player, sl);
+            case 4 -> horrorGhostSound(player, sl);
+            case 5 -> horrorDeepDread(player, sl);
+            case 6 -> horrorParticleShadow(player, sl);
+        }
+    }
+
+    /** Sends a dark whisper message and plays a low cave sound. */
+    private static void horrorWhisper(ServerPlayer player, ServerLevel sl) {
+        String msg = HORROR_MESSAGES[sl.getRandom().nextInt(HORROR_MESSAGES.length)];
+        player.displayClientMessage(Component.literal(msg), false);
+        sl.playSound(null, player.getX(), player.getY(), player.getZ(),
+                SoundEvents.AMBIENT_CAVE, SoundSource.AMBIENT,
+                0.35f, 0.4f + sl.getRandom().nextFloat() * 0.2f);
+    }
+
+    /** Plays a mob ambient sound from a random direction with no mob present. */
+    private static void horrorFakeMobSound(ServerPlayer player, ServerLevel sl) {
+        SoundEvent[] sounds = {
+            SoundEvents.ZOMBIE_AMBIENT,
+            SoundEvents.SKELETON_AMBIENT,
+            SoundEvents.ENDERMAN_AMBIENT,
+            SoundEvents.PHANTOM_AMBIENT,
+            SoundEvents.WARDEN_AMBIENT,
+        };
+        SoundEvent sound = sounds[sl.getRandom().nextInt(sounds.length)];
+        double angle = sl.getRandom().nextDouble() * Math.PI * 2;
+        double dist  = 8 + sl.getRandom().nextDouble() * 12;
+        sl.playSound(null,
+                player.getX() + Math.cos(angle) * dist,
+                player.getY() + (sl.getRandom().nextDouble() - 0.5) * 4,
+                player.getZ() + Math.sin(angle) * dist,
+                sound, SoundSource.HOSTILE,
+                0.5f, 0.7f + sl.getRandom().nextFloat() * 0.5f);
+    }
+
+    /** Plays quiet footstep-like sounds from behind the player. */
+    private static void horrorFakeFootsteps(ServerPlayer player, ServerLevel sl) {
+        Vec3 behind = player.position().subtract(player.getLookAngle().multiply(1, 0, 1).normalize().scale(5));
+        for (int i = 0; i < 3; i++) {
+            sl.playSound(null,
+                    behind.x + (sl.getRandom().nextDouble() - 0.5) * 2,
+                    player.getY(),
+                    behind.z + (sl.getRandom().nextDouble() - 0.5) * 2,
+                    SoundEvents.ZOMBIE_AMBIENT, SoundSource.HOSTILE,
+                    0.2f, 0.5f + sl.getRandom().nextFloat() * 0.3f);
+        }
+        player.displayClientMessage(Component.literal("§8§o...footsteps."), true);
+    }
+
+    /** Snuffs a nearby torch for 2 seconds, then restores it. */
+    private static void horrorTorchFlicker(ServerPlayer player, ServerLevel sl) {
+        BlockPos base = player.blockPosition();
+        for (int attempt = 0; attempt < 25; attempt++) {
+            int dx = sl.getRandom().nextInt(9) - 4;
+            int dy = sl.getRandom().nextInt(5) - 2;
+            int dz = sl.getRandom().nextInt(9) - 4;
+            BlockPos candidate = base.offset(dx, dy, dz);
+            BlockState bs = sl.getBlockState(candidate);
+            if (bs.is(Blocks.TORCH) || bs.is(Blocks.WALL_TORCH)
+                    || bs.is(Blocks.SOUL_TORCH) || bs.is(Blocks.SOUL_WALL_TORCH)) {
+                sl.setBlock(candidate, Blocks.AIR.defaultBlockState(), 3);
+                FLICKER_QUEUE.add(new Object[]{ sl, candidate, bs, sl.getGameTime() + 40L });
+                sl.playSound(null, candidate.getX(), candidate.getY(), candidate.getZ(),
+                        SoundEvents.CANDLE_EXTINGUISH, SoundSource.BLOCKS, 0.7f, 0.9f);
+                return;
+            }
+        }
+    }
+
+    /** Plays an unsettling atmospheric sound at the player's position. */
+    private static void horrorGhostSound(ServerPlayer player, ServerLevel sl) {
+        SoundEvent[] sounds = {
+            SoundEvents.ENDERMAN_STARE,
+            SoundEvents.SCULK_SHRIEKER_SHRIEK,
+            SoundEvents.WARDEN_AMBIENT,
+        };
+        SoundEvent sound = sounds[sl.getRandom().nextInt(sounds.length)];
+        sl.playSound(null, player.getX(), player.getY(), player.getZ(),
+                sound, SoundSource.AMBIENT,
+                0.4f, 0.6f + sl.getRandom().nextFloat() * 0.3f);
+        sl.sendParticles(ParticleTypes.LARGE_SMOKE,
+                player.getX(), player.getY() + 1, player.getZ(),
+                6, 0.8, 0.6, 0.8, 0.02);
+    }
+
+    /** Deep underground: warden breathing + unsettling messages. */
+    private static void horrorDeepDread(ServerPlayer player, ServerLevel sl) {
+        sl.playSound(null, player.getX(), player.getY(), player.getZ(),
+                SoundEvents.WARDEN_AMBIENT, SoundSource.HOSTILE, 0.8f, 0.4f);
+        sl.playSound(null, player.getX(), player.getY(), player.getZ(),
+                SoundEvents.SCULK_SHRIEKER_SHRIEK, SoundSource.BLOCKS, 0.4f, 0.35f);
+        String[] deepMsgs = {
+            "§4§o...it senses your heartbeat.",
+            "§8§o...the stone breathes around you.",
+            "§4§o...it has been here longer than the world.",
+            "§8§o...you dug too deep.",
+            "§4§o...the vibrations give you away.",
+            "§8§o...something in the deep is awake.",
+        };
+        player.displayClientMessage(
+                Component.literal(deepMsgs[sl.getRandom().nextInt(deepMsgs.length)]), false);
+        sl.sendParticles(ParticleTypes.SCULK_SOUL,
+                player.getX(), player.getY() + 0.5, player.getZ(),
+                8, 0.5, 0.3, 0.5, 0.02);
+    }
+
+    /** Spawns a brief smoke/soul-fire shape at a nearby position — as if something was there. */
+    private static void horrorParticleShadow(ServerPlayer player, ServerLevel sl) {
+        double angle = sl.getRandom().nextDouble() * Math.PI * 2;
+        double dist  = 5 + sl.getRandom().nextDouble() * 7;
+        double sx = player.getX() + Math.cos(angle) * dist;
+        double sz = player.getZ() + Math.sin(angle) * dist;
+        sl.sendParticles(ParticleTypes.LARGE_SMOKE, sx, player.getY() + 1.8, sz, 12, 0.2, 0.5, 0.2, 0.01);
+        sl.sendParticles(ParticleTypes.SCULK_SOUL,  sx, player.getY() + 0.2, sz,  5, 0.1, 0.2, 0.1, 0.01);
+        sl.playSound(null, sx, player.getY(), sz,
+                SoundEvents.AMBIENT_CAVE, SoundSource.AMBIENT,
+                0.3f, 0.3f + sl.getRandom().nextFloat() * 0.2f);
+    }
+
+    // ══════════════════════ Inventory passive buffs ════════════════════════════
+
+    /**
+     * Scans every player's full inventory every second and applies passive buffs
+     * for relic items regardless of which slot they occupy.
+     *
+     * King's Crown   → Strength I
+     * Sentinel's Charm → Resistance I when below 50 % HP (20 s cooldown)
+     * Tempest Relic  → Speed II + Jump Boost II
+     *                  (+ Strength III / Resistance II / Regen II / Fire & Water &
+     *                   Night Vision when Tempest Reaver is also in inventory)
+     */
+    private void registerInventoryPassiveBuffs() {
+        ServerTickEvents.END_SERVER_TICK.register(server -> {
+            if (server.getTickCount() % 20 != 0) return; // once per second
+
+            for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+                if (!(player.level() instanceof ServerLevel sl)) continue;
+
+                boolean hasKingsCrown    = false;
+                boolean hasSentinels     = false;
+                boolean hasTempestRelic  = false;
+                boolean hasTempestReaver = false;
+                ItemStack charmStack     = ItemStack.EMPTY;
+
+                var inv = player.getInventory();
+                for (int i = 0; i < inv.getContainerSize(); i++) {
+                    ItemStack s = inv.getItem(i);
+                    if (s.isEmpty()) continue;
+                    net.minecraft.world.item.Item item = s.getItem();
+                    if (item instanceof KingsCrownItem)    { hasKingsCrown    = true; }
+                    if (item instanceof SentinelsCharmItem) { hasSentinels     = true; charmStack = s; }
+                    if (item instanceof TempestCrownItem)  { hasTempestRelic  = true; }
+                    if (item == ModItems.TEMPEST_REAVER)   { hasTempestReaver = true; }
+                }
+
+                // King's Crown: Strength I
+                if (hasKingsCrown) {
+                    player.addEffect(new MobEffectInstance(MobEffects.STRENGTH, 60, 0, false, false));
+                }
+
+                // Sentinel's Charm: Resistance I when below 50 % HP, 20 s cooldown
+                if (hasSentinels && !charmStack.isEmpty()) {
+                    if (player.getHealth() <= player.getMaxHealth() * 0.5f
+                            && !player.getCooldowns().isOnCooldown(charmStack)) {
+                        player.addEffect(new MobEffectInstance(MobEffects.RESISTANCE, 100, 0, false, true));
+                        player.getCooldowns().addCooldown(charmStack, 400);
+                        player.displayClientMessage(Component.literal("§b🛡 Sentinel's Guard!"), true);
+                        sl.sendParticles(ParticleTypes.ENCHANTED_HIT,
+                                player.getX(), player.getY() + 1, player.getZ(),
+                                12, 0.5, 0.5, 0.5, 0.05);
+                        sl.playSound(null, player.getX(), player.getY(), player.getZ(),
+                                SoundEvents.SHIELD_BLOCK, SoundSource.PLAYERS, 0.8f, 1.2f);
+                    }
+                }
+
+                // Tempest Relic: Speed II + Jump Boost II (enhanced with Tempest Reaver)
+                if (hasTempestRelic) {
+                    player.addEffect(new MobEffectInstance(MobEffects.SPEED,      60, 1, false, false));
+                    player.addEffect(new MobEffectInstance(MobEffects.JUMP_BOOST, 60, 1, false, false));
+                    if (hasTempestReaver) {
+                        player.addEffect(new MobEffectInstance(MobEffects.STRENGTH,       60, 2, false, false));
+                        player.addEffect(new MobEffectInstance(MobEffects.RESISTANCE,     60, 1, false, false));
+                        player.addEffect(new MobEffectInstance(MobEffects.REGENERATION,   60, 1, false, false));
+                        player.addEffect(new MobEffectInstance(MobEffects.FIRE_RESISTANCE,60, 0, false, false));
+                        player.addEffect(new MobEffectInstance(MobEffects.WATER_BREATHING,60, 0, false, false));
+                        player.addEffect(new MobEffectInstance(MobEffects.NIGHT_VISION,  300, 0, false, false));
+                    }
+                }
+            }
+        });
+    }
+
+    // ═══════════════════ Relics: keep on death + Phoenix Ember ════════════════
+
+    /** Mod items removed from inventory before death so they are not dropped. */
+    private static final Map<UUID, List<ItemStack>> DEATH_KEPT_ITEMS = new ConcurrentHashMap<>();
+
+    /** Returns true if the item belongs to this mod. */
+    private static boolean isModItem(net.minecraft.world.item.Item item) {
+        return item instanceof StormBowItem
+            || item instanceof StormArrowItem
+            || item instanceof BladesOfSatanItem
+            || item instanceof ExecutionersSwordItem
+            || item instanceof SwordOfLightItem
+            || item instanceof GlacierLanceItem
+            || item instanceof StarForgedPickaxeItem
+            || item instanceof CataclysmItem
+            || item instanceof NaturesGuardianItem
+            || item instanceof NaturesHeartItem
+            || item instanceof TempestReaverItem
+            || item instanceof PoisonIvyItem
+            || item instanceof BerserkersFangItem
+            || item instanceof SentinelsCharmItem
+            || item instanceof PhoenixEmberItem
+            || item instanceof TempestCrownItem
+            || item instanceof VoidShardItem
+            || item instanceof KingsCrownItem;
+    }
+
+    /** Scans the entire inventory for a Phoenix Ember and returns the first one found. */
+    private static ItemStack findEmber(ServerPlayer player) {
+        var inv = player.getInventory();
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            ItemStack s = inv.getItem(i);
+            if (!s.isEmpty() && s.getItem() instanceof PhoenixEmberItem) return s;
+        }
+        return ItemStack.EMPTY;
+    }
+
+    private void registerRelicKeepEvents() {
+        // Intercept death before it processes:
+        //   • If the player carries a Phoenix Ember (not on cooldown) → cancel death and activate it.
+        //   • Otherwise → strip all mod items from inventory (so they are NOT dropped) and store them
+        //     in DEATH_KEPT_ITEMS to be restored after respawn.
+        ServerLivingEntityEvents.ALLOW_DEATH.register((entity, source, amount) -> {
+            if (!(entity instanceof ServerPlayer player)) return true;
+            if (!(player.level() instanceof ServerLevel sl)) return true;
+
+            // ── Phoenix Ember: cancel death ──────────────────────────────────
+            if (!PhoenixEmberItem.isOnCooldown(player, sl)) {
+                ItemStack ember = findEmber(player);
+                if (!ember.isEmpty()) {
+                    PhoenixEmberItem.activatePhoenixEmber(player, sl, ember);
+                    return false; // death cancelled
+                }
+            }
+
+            // ── Relic keep: remove from inventory so they don't drop ─────────
+            List<ItemStack> kept = new ArrayList<>();
+            var inv = player.getInventory();
+            for (int i = 0; i < inv.getContainerSize(); i++) {
+                ItemStack stack = inv.getItem(i);
+                if (!stack.isEmpty() && isModItem(stack.getItem())) {
+                    kept.add(stack.copy());
+                    inv.setItem(i, ItemStack.EMPTY);
+                }
+            }
+            if (!kept.isEmpty()) {
+                DEATH_KEPT_ITEMS.put(player.getUUID(), kept);
+            }
+            return true; // allow death
+        });
+
+        // After the player respawns, give mod items back.
+        ServerPlayerEvents.COPY_FROM.register((oldPlayer, newPlayer, alive) -> {
+            if (alive) return; // dimension change, not death
+            List<ItemStack> kept = DEATH_KEPT_ITEMS.remove(newPlayer.getUUID());
+            if (kept != null) {
+                for (ItemStack stack : kept) {
+                    newPlayer.getInventory().add(stack);
+                }
+            }
+        });
     }
 
     /**

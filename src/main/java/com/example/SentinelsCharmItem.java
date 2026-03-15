@@ -9,12 +9,9 @@ import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
-import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.Level;
 
 import java.util.Map;
 import java.util.UUID;
@@ -39,7 +36,7 @@ public class SentinelsCharmItem extends Item {
      */
     @Override
     public void inventoryTick(ItemStack stack, ServerLevel level, Entity entity, EquipmentSlot slot) {
-        if (slot != EquipmentSlot.MAINHAND || !(entity instanceof Player player)) return;
+        if (!(entity instanceof Player player)) return;
 
         // Check once per second
         if (level.getGameTime() % 20 != 0) return;
@@ -68,41 +65,4 @@ public class SentinelsCharmItem extends Item {
         }
     }
 
-    /**
-     * Every 4th hit dealt while holding the charm: deal +25% bonus damage
-     * to the target and spawn orange CRIT spark particles.
-     */
-    @Override
-    public void postHurtEnemy(ItemStack stack, LivingEntity target, LivingEntity attacker) {
-        if (!(attacker instanceof Player player)) {
-            super.postHurtEnemy(stack, target, attacker);
-            return;
-        }
-
-        int count = HIT_COUNTER.merge(player.getUUID(), 1, Integer::sum);
-
-        if (count >= 4) {
-            HIT_COUNTER.put(player.getUUID(), 0);
-
-            float baseDamage = (float) player.getAttributeValue(Attributes.ATTACK_DAMAGE);
-            float bonus = baseDamage * 0.25f;
-
-            if (bonus > 0) {
-                target.hurt(target.damageSources().playerAttack(player), bonus);
-            }
-
-            if (target.level() instanceof ServerLevel sl) {
-                // Orange spark particles (CRIT)
-                sl.sendParticles(ParticleTypes.CRIT,
-                        target.getX(), target.getY() + target.getBbHeight() * 0.5, target.getZ(),
-                        16, 0.4, 0.6, 0.4, 0.4);
-                sl.playSound(null, target.getX(), target.getY(), target.getZ(),
-                        SoundEvents.PLAYER_ATTACK_CRIT, SoundSource.PLAYERS, 1.0f, 1.0f);
-            }
-
-            player.displayClientMessage(Component.literal("§6⚔ Sentinel Strike!"), true);
-        }
-
-        super.postHurtEnemy(stack, target, attacker);
-    }
 }
