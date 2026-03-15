@@ -72,6 +72,8 @@ public class ReverieEntity extends PathfinderMob {
     private int    flickerTimer       = 300; // stage 1: controls when to briefly go invisible
     private double creepDist          = CREEP_DIST_START; // behind-teleport distance
     private int    spotCount          = 0;   // how many times player has caught a glimpse
+    private int    fakePlayerTimer    = 600; // fake nearby-player hallucinations
+    private int    chatCorruptTimer   = 500; // glitchy/corrupted chat feed
     private boolean spawnSoundPlayed  = false;
     private boolean whispered         = false;
 
@@ -110,12 +112,20 @@ public class ReverieEntity extends PathfinderMob {
         if (tpCooldown         > 0) tpCooldown--;
         if (sleepDisplayTimer  > 0) sleepDisplayTimer--;
         if (flickerTimer       > 0) flickerTimer--;
+        if (fakePlayerTimer    > 0) fakePlayerTimer--;
+        if (chatCorruptTimer   > 0) chatCorruptTimer--;
 
         ServerLevel sl = (ServerLevel) level();
 
         if (!spawnSoundPlayed && lifeTicks == 1) {
             spawnSoundPlayed = true;
             playSpawnSound(sl);
+            // 35% chance: start fully invisible — the player feels it but never sees it
+            // until stage 2 forces a reveal
+            if (sl.getRandom().nextInt(3) == 0) {
+                addEffect(new MobEffectInstance(MobEffects.INVISIBILITY,
+                        500 + getRandom().nextInt(600), 0, false, false));
+            }
         }
 
         // Always face the target
@@ -235,6 +245,18 @@ public class ReverieEntity extends PathfinderMob {
                         SoundEvents.SCULK_BLOCK_CHARGE, SoundSource.AMBIENT, 0.4f, 0.1f);
             }
             darknessTimer = 80 + sl.getRandom().nextInt(80);
+        }
+
+        // ── fake nearby-player hallucinations (stage 2+) ──────────────────────
+        if (stage >= 2 && fakePlayerTimer <= 0 && target != null) {
+            if (sl.getRandom().nextInt(3) == 0) playFakePlayerHallucination(sl, target);
+            fakePlayerTimer = 400 + sl.getRandom().nextInt(400); // every 20–40 s
+        }
+
+        // ── glitchy / corrupted chat feed (stage 2+) ──────────────────────────
+        if (stage >= 2 && chatCorruptTimer <= 0 && target != null) {
+            if (sl.getRandom().nextInt(2) == 0) playChaoticChat(sl, target);
+            chatCorruptTimer = 280 + sl.getRandom().nextInt(320);
         }
 
         // ── ambient sounds ─────────────────────────────────────────────────────
@@ -721,6 +743,108 @@ public class ReverieEntity extends PathfinderMob {
             }
         }
         return null; // if no clear spot found, stay put this tick
+    }
+
+    // ──────────────── fake player hallucinations ──────────────────────────────
+
+    /**
+     * Makes the player hallucinate other players being hostile, afraid, or wrong.
+     * Uses real nearby player names when available — makes it indistinguishable
+     * from actual player chat.  When alone, uses the player's own name.
+     */
+    private void playFakePlayerHallucination(ServerLevel sl, ServerPlayer tp) {
+        List<Player> nearby = sl.getEntitiesOfClass(Player.class,
+                tp.getBoundingBox().inflate(25.0)).stream()
+                .filter(p -> p != tp).toList();
+
+        int mode = sl.getRandom().nextInt(3); // 0=hostile chat, 1=face distortion, 2=own name
+        if (nearby.isEmpty()) mode = 2; // no nearby players → only own name
+
+        switch (mode) {
+            case 0 -> {
+                // Fake hostile/afraid message from a real nearby player
+                Player victim = nearby.get(sl.getRandom().nextInt(nearby.size()));
+                String name = victim.getName().getString();
+                String[] msgs = {
+                    "§4...I can see it too. Don't let it know you see it.",
+                    "§8§orun. just run.",
+                    "§4§lTURN AROUND. NOW.",
+                    "§cwhy is it looking at me",
+                    "§4§k####§r §4IT FOLLOWED YOU HERE§r §4§k####§r",
+                    "§8§oI haven't slept either. it found me too.",
+                    "§4dont trust anyone. not even me.",
+                    "§7§kit's right there§r§7. right there. why can't you see it.",
+                    "§4§k@@@§r §cSTOP LOOKING AT IT§r §4§k@@@§r",
+                };
+                String msg = msgs[sl.getRandom().nextInt(msgs.length)];
+                tp.sendSystemMessage(Component.literal("§f<§r§7" + name + "§f>§r " + msg));
+                // Play a wrong sound near their actual position
+                sl.playSound(null, victim.getX(), victim.getY(), victim.getZ(),
+                        SoundEvents.ENDERMAN_STARE, SoundSource.AMBIENT, 0.4f, 0.65f);
+            }
+            case 1 -> {
+                // Distorted face description + wrong sound from nearby player's position
+                Player victim = nearby.get(sl.getRandom().nextInt(nearby.size()));
+                String name = victim.getName().getString();
+                String[] faceMsgs = {
+                    "§c§o[" + name + "]'s face looks... wrong.",
+                    "§4§o" + name + " is smiling. They shouldn't be smiling like that.",
+                    "§8§o[" + name + " is staring at something behind you]",
+                    "§c§o" + name + "'s eyes aren't moving.",
+                    "§4§o[" + name + " turned their head too far]",
+                };
+                String faceMsg = faceMsgs[sl.getRandom().nextInt(faceMsgs.length)];
+                tp.sendSystemMessage(Component.literal(faceMsg));
+                // Layered sounds near the victim: zombie moan + cave ambience
+                sl.playSound(null, victim.getX(), victim.getY(), victim.getZ(),
+                        SoundEvents.ZOMBIE_AMBIENT, SoundSource.HOSTILE, 0.5f, 0.6f);
+                sl.playSound(null, victim.getX(), victim.getY(), victim.getZ(),
+                        SoundEvents.AMBIENT_CAVE,  SoundSource.AMBIENT, 0.3f, 0.2f);
+                // Flash their name in actionbar with obfuscation
+                tp.displayClientMessage(Component.literal(
+                        "§c[§r§l§k" + name.charAt(0) + "§r§l" + name.substring(1) + "§r§c]"
+                        + " §4§o...something is wrong with their face."), true);
+            }
+            case 2 -> {
+                // Most disturbing: fake message from the player's OWN name
+                String ownName = tp.getName().getString();
+                String[] selfMsgs = {
+                    "§8§o...I'm so tired.",
+                    "§4I can hear it breathing.",
+                    "§4§k@@@§r §4stop looking at me§r §4§k@@@§r",
+                    "§8§owhen did I type this",
+                    "§c§o...it's been standing there the whole time.",
+                    "§4§ki can't stop§r §4§oi can't stop§r §4§ki can't stop§r",
+                };
+                String selfMsg = selfMsgs[sl.getRandom().nextInt(selfMsgs.length)];
+                tp.sendSystemMessage(Component.literal("§f<§r§7" + ownName + "§f>§r " + selfMsg));
+            }
+        }
+    }
+
+    // ──────────────────── glitchy chat corruption ──────────────────────────────
+
+    /**
+     * Sends corrupted/glitched chat messages that look like the server feed
+     * is breaking down — reflecting the player's fractured mental state.
+     */
+    private void playChaoticChat(ServerLevel sl, ServerPlayer tp) {
+        int nights = tp.getStats().getValue(Stats.CUSTOM.get(Stats.TIME_SINCE_REST)) / 24000;
+        String[] glitchMsgs = {
+            "§8§k■■■§r §4S  L  E  E  P§r §8§k■■■§r",
+            "§7§k[§r§8 checking... §7§k]§r §8§k########§r",
+            "§4§k@#@§r §c§oincoming... §4§k#@#§r",
+            "§8§k▀▄▀§r §8§o...receiving... §8§k▀▄▀§r §8§k########§r",
+            "§4§k##§r §c Y O U   A R E   N O T   A L O N E §4§k##§r",
+            "§8§k........§r §8§o...still there? §8§k........§r",
+            "§4§k!!§r §4 W A K E   U P §4§k!!§r",
+            "§7§k[§r§8 NIGHT " + Math.max(1, nights) + " §7§k]§r §8§k—§r§8§o ...how many more?§8§k—§r",
+            "§8§k████§r§4§k###§r §8§o §4§k####§r§8§k████§r",
+            "§4§k!!§r §c§oERROR: §8§k########§r§c§o :MIND §4§k!!§r",
+            "§7§o[§r§8 §k########§r§8§o chat feed corrupted §8§k########§r §7§o]§r",
+        };
+        String msg = glitchMsgs[sl.getRandom().nextInt(glitchMsgs.length)];
+        tp.sendSystemMessage(Component.literal(msg));
     }
 
     // ─────────────────────── panic sequence ───────────────────────────────────
