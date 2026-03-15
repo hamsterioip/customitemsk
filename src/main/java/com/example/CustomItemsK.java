@@ -1663,6 +1663,7 @@ public class CustomItemsK implements ModInitializer {
                             }
                             HollowEntity hollow = new HollowEntity(HollowEntity.TYPE, sl);
                             hollow.setPos(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5);
+                            hollow.targetPlayerUUID = target.getUUID();
                             sl.addFreshEntity(hollow);
                             ctx.getSource().sendSuccess(() -> Component.literal(
                                     "§8Spawned §7The Hollow §8near §f"
