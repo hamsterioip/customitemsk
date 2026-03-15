@@ -1297,82 +1297,101 @@ public class CustomItemsK implements ModInitializer {
     // TELEPORT COMMANDS - /sethome, /home, /tpa, /tpaccept, /tpdeny
     // =========================================================================
 
-    // Home storage: Player UUID -> BlockPos
-    private static final Map<UUID, BlockPos> PLAYER_HOMES = new ConcurrentHashMap<>();
-    private static final Map<UUID, String> PLAYER_HOME_DIMENSIONS = new ConcurrentHashMap<>();
+    // Named home storage: Player UUID -> (home name -> BlockPos/dimension)
+    private static final Map<UUID, Map<String, BlockPos>>  PLAYER_HOMES      = new ConcurrentHashMap<>();
+    private static final Map<UUID, Map<String, String>>    PLAYER_HOME_DIMS  = new ConcurrentHashMap<>();
+    private static final int MAX_HOMES = 5;
 
     // TPA requests: Target UUID -> Requester UUID
     private static final Map<UUID, UUID> TPA_REQUESTS = new ConcurrentHashMap<>();
     private static final Map<UUID, Long> TPA_REQUEST_TIMES = new ConcurrentHashMap<>();
     private static final long TPA_TIMEOUT_TICKS = 1200; // 60 seconds
 
+    /** Suggests the calling player's existing home names. */
+    private static final SuggestionProvider<CommandSourceStack> HOME_SUGGESTIONS =
+            (ctx, builder) -> {
+                if (ctx.getSource().getEntity() instanceof ServerPlayer p) {
+                    Map<String, BlockPos> h = PLAYER_HOMES.get(p.getUUID());
+                    if (h != null) h.keySet().forEach(builder::suggest);
+                }
+                return builder.buildFuture();
+            };
+
     private void registerTeleportCommands() {
-        // /sethome - Set your home location
+        // /sethome [name] — set a named home (default name "home", max MAX_HOMES per player)
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
             dispatcher.register(
                 Commands.literal("sethome")
+                    .executes(ctx -> doSetHome(ctx, "home"))
+                    .then(Commands.argument("name", StringArgumentType.word())
+                        .executes(ctx -> doSetHome(ctx,
+                                StringArgumentType.getString(ctx, "name").toLowerCase())))
+            )
+        );
+
+        // /home [name] — teleport to a named home (default "home")
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+            dispatcher.register(
+                Commands.literal("home")
+                    .executes(ctx -> doHome(ctx, "home"))
+                    .then(Commands.argument("name", StringArgumentType.word())
+                        .suggests(HOME_SUGGESTIONS)
+                        .executes(ctx -> doHome(ctx,
+                                StringArgumentType.getString(ctx, "name").toLowerCase())))
+            )
+        );
+
+        // /homes — list all your homes
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+            dispatcher.register(
+                Commands.literal("homes")
                     .executes(ctx -> {
                         if (!(ctx.getSource().getEntity() instanceof ServerPlayer player)) {
                             ctx.getSource().sendFailure(Component.literal("Only players can use this command!"));
                             return 0;
                         }
-                        
-                        ServerLevel level = (ServerLevel) player.level();
-                        BlockPos pos = player.blockPosition();
-                        String dimension = level.dimension().toString();
-                        
-                        PLAYER_HOMES.put(player.getUUID(), pos);
-                        PLAYER_HOME_DIMENSIONS.put(player.getUUID(), dimension);
-                        
-                        ctx.getSource().sendSuccess(() -> Component.literal(
-                                "§a✦ Home set at §f[" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + "] §7in §f" + dimension),
-                                false);
-                        
-                        // Particle effect
-                        level.sendParticles(ParticleTypes.HAPPY_VILLAGER,
-                                player.getX(), player.getY() + 1, player.getZ(),
-                                20, 0.5, 0.5, 0.5, 0.1);
-                        level.playSound(null, player.getX(), player.getY(), player.getZ(),
-                                SoundEvents.EXPERIENCE_ORB_PICKUP, SoundSource.PLAYERS, 1.0f, 1.0f);
-                        
+                        Map<String, BlockPos> homes = PLAYER_HOMES.get(player.getUUID());
+                        Map<String, String>   dims  = PLAYER_HOME_DIMS.get(player.getUUID());
+                        if (homes == null || homes.isEmpty()) {
+                            ctx.getSource().sendFailure(Component.literal("§cYou have no homes set. Use /sethome [name]."));
+                            return 0;
+                        }
+                        StringBuilder sb = new StringBuilder("§6Homes §7(" + homes.size() + "/" + MAX_HOMES + ")§6:\n");
+                        homes.forEach((name, pos) -> {
+                            String dim = dims != null ? dims.getOrDefault(name, "?") : "?";
+                            sb.append("  §e").append(name).append(" §7— §f[")
+                              .append(pos.getX()).append(", ").append(pos.getY()).append(", ").append(pos.getZ())
+                              .append("] §8(").append(dim).append(")\n");
+                        });
+                        player.sendSystemMessage(Component.literal(sb.toString().stripTrailing()));
                         return 1;
                     })
             )
         );
 
-        // /home - Teleport to your home
+        // /delhome <name> — delete a named home
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
             dispatcher.register(
-                Commands.literal("home")
-                    .executes(ctx -> {
-                        if (!(ctx.getSource().getEntity() instanceof ServerPlayer player)) {
-                            ctx.getSource().sendFailure(Component.literal("Only players can use this command!"));
-                            return 0;
-                        }
-                        
-                        UUID uuid = player.getUUID();
-                        BlockPos homePos = PLAYER_HOMES.get(uuid);
-                        String homeDim = PLAYER_HOME_DIMENSIONS.get(uuid);
-                        
-                        if (homePos == null) {
-                            ctx.getSource().sendFailure(Component.literal("§cYou haven't set a home yet! Use /sethome first."));
-                            return 0;
-                        }
-                        
-                        ServerLevel currentLevel = (ServerLevel) player.level();
-                        String currentDim = currentLevel.dimension().toString();
-                        
-                        // Check if player is in the same dimension
-                        if (!currentDim.equals(homeDim)) {
-                            ctx.getSource().sendFailure(Component.literal("§cYour home is in a different dimension (" + homeDim + ")!"));
-                            return 0;
-                        }
-                        
-                        // Teleport with effects
-                        teleportPlayer(player, currentLevel, homePos, "§a✦ Welcome home!");
-                        
-                        return 1;
-                    })
+                Commands.literal("delhome")
+                    .then(Commands.argument("name", StringArgumentType.word())
+                        .suggests(HOME_SUGGESTIONS)
+                        .executes(ctx -> {
+                            if (!(ctx.getSource().getEntity() instanceof ServerPlayer player)) {
+                                ctx.getSource().sendFailure(Component.literal("Only players can use this command!"));
+                                return 0;
+                            }
+                            String name = StringArgumentType.getString(ctx, "name").toLowerCase();
+                            Map<String, BlockPos> homes = PLAYER_HOMES.get(player.getUUID());
+                            if (homes == null || !homes.containsKey(name)) {
+                                ctx.getSource().sendFailure(Component.literal("§cNo home named '§f" + name + "§c' found."));
+                                return 0;
+                            }
+                            homes.remove(name);
+                            Map<String, String> dims = PLAYER_HOME_DIMS.get(player.getUUID());
+                            if (dims != null) dims.remove(name);
+                            ctx.getSource().sendSuccess(() -> Component.literal("§a✦ Home '§f" + name + "§a' deleted."), false);
+                            return 1;
+                        }))
             )
         );
 
@@ -1525,32 +1544,97 @@ public class CustomItemsK implements ModInitializer {
         );
     }
 
+    private static int doSetHome(CommandContext<CommandSourceStack> ctx, String name) {
+        if (!(ctx.getSource().getEntity() instanceof ServerPlayer player)) {
+            ctx.getSource().sendFailure(Component.literal("Only players can use this command!"));
+            return 0;
+        }
+        // Validate name
+        if (!name.matches("[a-z0-9_]{1,16}")) {
+            ctx.getSource().sendFailure(Component.literal("§cHome name must be 1-16 lowercase letters/numbers/underscores."));
+            return 0;
+        }
+        UUID uuid = player.getUUID();
+        Map<String, BlockPos> homes = PLAYER_HOMES.computeIfAbsent(uuid, k -> new ConcurrentHashMap<>());
+        Map<String, String>   dims  = PLAYER_HOME_DIMS.computeIfAbsent(uuid, k -> new ConcurrentHashMap<>());
+
+        if (!homes.containsKey(name) && homes.size() >= MAX_HOMES) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "§cYou already have §f" + MAX_HOMES + " §chomes! Delete one first with §f/delhome <name>§c."));
+            return 0;
+        }
+
+        ServerLevel level = (ServerLevel) player.level();
+        BlockPos pos = player.blockPosition();
+        String dimension = level.dimension().toString();
+        homes.put(name, pos);
+        dims.put(name, dimension);
+
+        boolean isUpdate = homes.containsKey(name);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "§a✦ Home §f'" + name + "' §a" + (isUpdate ? "updated" : "set") +
+                " at §f[" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + "] §7in §f" + dimension),
+                false);
+
+        level.sendParticles(ParticleTypes.HAPPY_VILLAGER,
+                player.getX(), player.getY() + 1, player.getZ(), 20, 0.5, 0.5, 0.5, 0.1);
+        level.playSound(null, player.getX(), player.getY(), player.getZ(),
+                SoundEvents.EXPERIENCE_ORB_PICKUP, SoundSource.PLAYERS, 1.0f, 1.0f);
+        return 1;
+    }
+
+    private static int doHome(CommandContext<CommandSourceStack> ctx, String name) {
+        if (!(ctx.getSource().getEntity() instanceof ServerPlayer player)) {
+            ctx.getSource().sendFailure(Component.literal("Only players can use this command!"));
+            return 0;
+        }
+        UUID uuid = player.getUUID();
+        Map<String, BlockPos> homes = PLAYER_HOMES.get(uuid);
+        Map<String, String>   dims  = PLAYER_HOME_DIMS.get(uuid);
+
+        BlockPos homePos = homes != null ? homes.get(name) : null;
+        if (homePos == null) {
+            if (homes == null || homes.isEmpty()) {
+                ctx.getSource().sendFailure(Component.literal("§cYou have no homes set. Use §f/sethome [name]§c."));
+            } else {
+                ctx.getSource().sendFailure(Component.literal(
+                        "§cNo home named '§f" + name + "§c'. Your homes: §f" + String.join(", ", homes.keySet())));
+            }
+            return 0;
+        }
+
+        String homeDim = dims != null ? dims.get(name) : null;
+        ServerLevel currentLevel = (ServerLevel) player.level();
+        if (homeDim != null && !currentLevel.dimension().toString().equals(homeDim)) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "§cHome '§f" + name + "§c' is in a different dimension (§f" + homeDim + "§c)!"));
+            return 0;
+        }
+
+        teleportPlayerStatic(player, currentLevel, homePos, "§a✦ Teleported to home '§f" + name + "§a'!");
+        return 1;
+    }
+
     /**
-     * Teleports a player to a position with visual and sound effects
+     * Teleports a player to a position with visual and sound effects (instance version for TPA).
      */
     private void teleportPlayer(ServerPlayer player, ServerLevel level, BlockPos pos, String message) {
-        // Particles at old location
+        teleportPlayerStatic(player, level, pos, message);
+    }
+
+    private static void teleportPlayerStatic(ServerPlayer player, ServerLevel level, BlockPos pos, String message) {
         level.sendParticles(ParticleTypes.PORTAL,
-                player.getX(), player.getY() + 1, player.getZ(),
-                50, 0.5, 1.0, 0.5, 0.1);
-        
-        // Play sound at old location
+                player.getX(), player.getY() + 1, player.getZ(), 50, 0.5, 1.0, 0.5, 0.1);
         level.playSound(null, player.getX(), player.getY(), player.getZ(),
                 SoundEvents.ENDERMAN_TELEPORT, SoundSource.PLAYERS, 1.0f, 1.0f);
-        
-        // Teleport
+
         player.teleportTo(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5);
-        
-        // Particles at new location
+
         level.sendParticles(ParticleTypes.PORTAL,
-                player.getX(), player.getY() + 1, player.getZ(),
-                50, 0.5, 1.0, 0.5, 0.1);
-        
-        // Play sound at new location
+                player.getX(), player.getY() + 1, player.getZ(), 50, 0.5, 1.0, 0.5, 0.1);
         level.playSound(null, player.getX(), player.getY(), player.getZ(),
                 SoundEvents.ENDERMAN_TELEPORT, SoundSource.PLAYERS, 1.0f, 1.0f);
-        
-        // Send message
+
         player.displayClientMessage(Component.literal(message), false);
     }
 
