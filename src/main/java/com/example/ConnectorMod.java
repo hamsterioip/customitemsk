@@ -6,8 +6,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.InputStream;
+import java.net.URI;
 import java.net.URLConnection;
-import java.net.URL;
 import java.nio.file.*;
 import java.security.MessageDigest;
 import java.util.Scanner;
@@ -44,10 +44,12 @@ public class ConnectorMod implements ModInitializer {
         LOGGER.info("CustomItemsK Connector starting...");
         applyPendingUpdate();
 
-        new Thread(() -> {
+        Thread updater = new Thread(() -> {
             try { checkForUpdates(); }
             catch (Exception e) { LOGGER.error("Update check failed: " + e.getMessage()); }
-        }, "CustomItemsK-Updater").start();
+        }, "CustomItemsK-Updater");
+        updater.setDaemon(true);
+        updater.start();
     }
 
     // -------------------------------------------------------------------------
@@ -56,23 +58,42 @@ public class ConnectorMod implements ModInitializer {
 
     private void applyPendingUpdate() {
         try {
-            Path modsDir     = FabricLoader.getInstance().getGameDir().resolve("mods");
-            Path pendingPath = modsDir.resolve(MOD_FILENAME + ".pending");
-            Path targetPath  = modsDir.resolve(MOD_FILENAME);
+            Path modsDir      = FabricLoader.getInstance().getGameDir().resolve("mods");
+            Path pendingPath  = modsDir.resolve(MOD_FILENAME + ".pending");
+            Path sha256Path   = modsDir.resolve(MOD_FILENAME + ".pending.sha256");
+            Path targetPath   = modsDir.resolve(MOD_FILENAME);
 
-            if (Files.exists(pendingPath)) {
-                try {
-                    cleanupOldVersions(modsDir);
-                    Files.move(pendingPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
-                    LOGGER.info("Applied pending update — restart required for full effect.");
-                } catch (Exception e) {
-                    // On Windows the running JAR is locked — launch watchdog to swap after exit
-                    LOGGER.debug("Direct apply failed (JAR locked), launching watchdog: " + e.getMessage());
-                    scheduleWindowsWatchdog(
-                            pendingPath.toAbsolutePath().toString(),
-                            targetPath.toAbsolutePath().toString(),
-                            modsDir);
+            if (!Files.exists(pendingPath)) return;
+
+            // Re-verify integrity before applying — guards against partial downloads
+            // that survived a crash between the download and the size/hash check.
+            if (Files.exists(sha256Path)) {
+                String expectedHash = Files.readString(sha256Path).strip();
+                String actualHash   = computeSha256(pendingPath);
+                if (!expectedHash.equalsIgnoreCase(actualHash)) {
+                    LOGGER.error("Pending update failed SHA-256 re-check — discarding corrupted file."
+                            + "\n  expected: " + expectedHash
+                            + "\n  got:      " + actualHash);
+                    Files.deleteIfExists(pendingPath);
+                    Files.deleteIfExists(sha256Path);
+                    return;
                 }
+                LOGGER.info("Pending update SHA-256 re-verified: " + actualHash);
+            }
+
+            try {
+                cleanupOldVersions(modsDir);
+                Files.move(pendingPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
+                Files.deleteIfExists(sha256Path);
+                LOGGER.info("Applied pending update — restart required for full effect.");
+            } catch (Exception e) {
+                // On Windows the running JAR is locked — launch watchdog to swap after exit
+                LOGGER.debug("Direct apply failed (JAR locked), launching watchdog: " + e.getMessage());
+                scheduleWindowsWatchdog(
+                        pendingPath.toAbsolutePath().toString(),
+                        targetPath.toAbsolutePath().toString(),
+                        sha256Path.toAbsolutePath().toString(),
+                        modsDir);
             }
         } catch (Exception e) {
             LOGGER.debug("applyPendingUpdate error: " + e.getMessage());
@@ -96,16 +117,21 @@ public class ConnectorMod implements ModInitializer {
      */
     private static final String TASK_NAME = "CustomItemsKUpdate";
 
-    private void scheduleWindowsWatchdog(String pendingStr, String targetStr, Path modsDir) {
+    private void scheduleWindowsWatchdog(String pendingStr, String targetStr,
+                                          String sha256Str, Path modsDir) {
         if (!System.getProperty("os.name", "").toLowerCase().contains("win")) return;
         try {
             long pid = ProcessHandle.current().pid();
             Path batchFile = modsDir.resolve("_csk_update.bat");
             String nl = "\r\n";
+            // Paths are quoted with set "VAR=value" syntax to handle spaces and most
+            // special characters safely (ampersands, parentheses, carets, etc.)
             String batch =
                 "@echo off" + nl +
-                "set PENDING=" + pendingStr + nl +
-                "set TARGET=" + targetStr + nl +
+                "set \"PENDING=" + pendingStr + "\"" + nl +
+                "set \"TARGET=" + targetStr + "\"" + nl +
+                "set \"SHA256FILE=" + sha256Str + "\"" + nl +
+                "set RETRIES=0" + nl +
                 ":WAITPID" + nl +
                 "tasklist /fi \"PID eq " + pid + "\" 2>nul | find /i \"" + pid + "\" >nul" + nl +
                 "if %ERRORLEVEL%==0 (" + nl +
@@ -118,12 +144,19 @@ public class ConnectorMod implements ModInitializer {
                 "    del \"%~f0\" & exit /b 0" + nl +
                 ")" + nl +
                 ":DELLOOP" + nl +
+                "set /a RETRIES+=1" + nl +
+                "if %RETRIES% GTR 30 (" + nl +
+                "    echo Update failed: could not delete locked file after 30 attempts. >> \"%TARGET%.update.log\"" + nl +
+                "    schtasks /delete /tn \"" + TASK_NAME + "\" /f >nul 2>&1" + nl +
+                "    del \"%~f0\" & exit /b 1" + nl +
+                ")" + nl +
                 "del /f /q \"%TARGET%\" 2>nul" + nl +
                 "if exist \"%TARGET%\" (" + nl +
                 "    timeout /t 2 /nobreak >nul" + nl +
                 "    goto DELLOOP" + nl +
                 ")" + nl +
                 "move /y \"%PENDING%\" \"%TARGET%\"" + nl +
+                "del /f /q \"%SHA256FILE%\" 2>nul" + nl +
                 "schtasks /delete /tn \"" + TASK_NAME + "\" /f >nul 2>&1" + nl +
                 "del \"%~f0\"" + nl;
             Files.writeString(batchFile, batch);
@@ -248,7 +281,7 @@ public class ConnectorMod implements ModInitializer {
 
     private String downloadString(String urlString) {
         try {
-            URLConnection conn = new URL(urlString).openConnection();
+            URLConnection conn = URI.create(urlString).toURL().openConnection();
             conn.setConnectTimeout(10_000);
             conn.setReadTimeout(15_000);
             try (Scanner scanner = new Scanner(conn.getInputStream()).useDelimiter("\\A")) {
@@ -304,8 +337,9 @@ public class ConnectorMod implements ModInitializer {
             Path modsDir     = FabricLoader.getInstance().getGameDir().resolve("mods");
             Path targetPath  = modsDir.resolve(MOD_FILENAME);
             Path pendingPath = modsDir.resolve(MOD_FILENAME + ".pending");
+            Path sha256Path  = modsDir.resolve(MOD_FILENAME + ".pending.sha256");
 
-            URLConnection conn = new URL(downloadUrl).openConnection();
+            URLConnection conn = URI.create(downloadUrl).toURL().openConnection();
             conn.setConnectTimeout(10_000);
             conn.setReadTimeout(60_000);
             try (InputStream in = conn.getInputStream()) {
@@ -326,6 +360,8 @@ public class ConnectorMod implements ModInitializer {
                             + "  got:      " + actualSha256);
                 }
                 LOGGER.info("SHA-256 verified: " + actualSha256);
+                // Persist hash so applyPendingUpdate can re-verify on next boot
+                Files.writeString(sha256Path, actualSha256);
             }
 
             updateReady    = true;
@@ -333,11 +369,12 @@ public class ConnectorMod implements ModInitializer {
 
             String pending = pendingPath.toAbsolutePath().toString();
             String target  = targetPath.toAbsolutePath().toString();
+            String sha256  = sha256Path.toAbsolutePath().toString();
 
             // Launch the watchdog NOW — it watches the Minecraft PID and swaps the
             // files the moment that PID disappears, covering both clean quit and
             // Modrinth/launcher force-kill (shutdown hooks don't fire on force-kill).
-            scheduleWindowsWatchdog(pending, target, modsDir);
+            scheduleWindowsWatchdog(pending, target, sha256, modsDir);
 
             // Shutdown hook: on non-Windows (or graceful exit where lock releases
             // early) try a direct move.  The watchdog's "if not exist PENDING" guard
@@ -347,6 +384,7 @@ public class ConnectorMod implements ModInitializer {
                     cleanupOldVersions(modsDir);
                     Files.move(Paths.get(pending), Paths.get(target),
                             StandardCopyOption.REPLACE_EXISTING);
+                    Files.deleteIfExists(Paths.get(sha256));
                     LOGGER.info("Update applied via shutdown hook: " + newVersion);
                 } catch (Exception ignored) {
                     // On Windows the file is still locked here — watchdog handles it
