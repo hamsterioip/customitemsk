@@ -281,10 +281,10 @@ public class CustomItemsK implements ModInitializer {
                     && StormBowItem.STORM_ARROWS.contains(arrow.getUUID())
                     && entity.level() instanceof ServerLevel sl) {
 
-                int marks = StormBowItem.THUNDER_MARKS.merge(entity.getUUID(), 1, Integer::sum);
+                int marks = ThunderMarkTracker.recordHit(StormBowItem.THUNDER_MARKS, entity.getUUID());
 
-                if (marks >= 3) {
-                    StormBowItem.THUNDER_MARKS.remove(entity.getUUID());
+                if (ThunderMarkTracker.shouldTriggerLightning(marks)) {
+                    ThunderMarkTracker.clearMarks(StormBowItem.THUNDER_MARKS, entity.getUUID());
 
                     // Strike the target
                     LightningBolt bolt = new LightningBolt(EntityType.LIGHTNING_BOLT, sl);
@@ -312,7 +312,7 @@ public class CustomItemsK implements ModInitializer {
 
             // Clear mark when the entity dies
             if (killed) {
-                StormBowItem.THUNDER_MARKS.remove(entity.getUUID());
+                ThunderMarkTracker.clearMarks(StormBowItem.THUNDER_MARKS, entity.getUUID());
             }
         });
 

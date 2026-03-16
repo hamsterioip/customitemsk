@@ -31,7 +31,7 @@ public class WatcherEntity extends PathfinderMob {
     public static final String SKIN_NAME = "nooq4oz_";
 
     // 8-degree viewing cone — if player's crosshair lands within this, Watcher vanishes
-    private static final double LOOK_DOT_THRESHOLD = Math.cos(Math.toRadians(8.0));
+    private static final double LOOK_DOT_THRESHOLD = WatcherMath.LOOK_DOT_THRESHOLD;
     // Within 12 blocks → always vanishes
     private static final double VANISH_DIST_SQ = 12.0 * 12.0;
     // Fail-safe lifetime: 1 hour
@@ -248,13 +248,8 @@ public class WatcherEntity extends PathfinderMob {
     // -------------------------------------------------------------------------
     
     private int calculateAmbientSoundInterval() {
-        return switch (stage) {
-            case 1 -> 200 + getRandom().nextInt(100);  // 10-15 seconds
-            case 2 -> 160 + getRandom().nextInt(80);   // 8-12 seconds  
-            case 3 -> 120 + getRandom().nextInt(60);   // 6-9 seconds
-            case 4 -> 80 + getRandom().nextInt(60);    // 4-7 seconds
-            default -> 40 + getRandom().nextInt(40);   // Stage 5+: 2-4 seconds
-        };
+        return WatcherMath.ambientIntervalMin(stage)
+                + getRandom().nextInt(WatcherMath.ambientIntervalRange(stage));
     }
     
     private void playAmbientPsychologicalSounds(ServerLevel sl) {
