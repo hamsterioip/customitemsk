@@ -64,6 +64,7 @@ public class HollowEntity extends PathfinderMob {
     private int     breathingTimer  = 0;
     private int     flickerTimer    = 0;
     private int     lurchTimer      = 0;   // stage 4 lunge cooldown
+    private int     stareTicks      = 0;   // consecutive ticks under Hollow's stare (stage 3+)
     private boolean spawnSoundPlayed = false;
     private boolean whispered        = false;
 
@@ -174,6 +175,29 @@ public class HollowEntity extends PathfinderMob {
             target.addEffect(new MobEffectInstance(MobEffects.DARKNESS, 60, 0, false, false));
             if (stage >= 4) {
                 ServerPlayNetworking.send(target, new HollowStarePacket());
+            }
+        }
+
+        // Stare exposure — accumulate while target is within 20 blocks, decay otherwise
+        if (stage >= 3 && target != null && distanceTo(target) < 20.0) {
+            stareTicks = Math.min(stareTicks + 1, 240);
+        } else {
+            stareTicks = Math.max(0, stareTicks - 2);
+        }
+        // Apply escalating paralysis every 20 ticks based on sustained exposure
+        if (stage >= 3 && lifeTicks % 20 == 0 && target != null) {
+            if (stareTicks >= 160) {
+                // 8 s+ : Slowness III + Weakness I + Mining Fatigue I
+                target.addEffect(new MobEffectInstance(MobEffects.SLOWNESS,       40, 2, false, false));
+                target.addEffect(new MobEffectInstance(MobEffects.WEAKNESS,        40, 0, false, false));
+                target.addEffect(new MobEffectInstance(MobEffects.MINING_FATIGUE,  40, 0, false, false));
+            } else if (stareTicks >= 100) {
+                // 5–8 s: Slowness II + Weakness I
+                target.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, 40, 1, false, false));
+                target.addEffect(new MobEffectInstance(MobEffects.WEAKNESS, 40, 0, false, false));
+            } else if (stareTicks >= 40) {
+                // 2–5 s: Slowness I
+                target.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, 40, 0, false, false));
             }
         }
 
@@ -498,6 +522,7 @@ public class HollowEntity extends PathfinderMob {
     // ──────────────────────────────── vanish ──────────────────────────────────
 
     private void vanish(ServerLevel sl, Player trigger) {
+        stareTicks = 0;
         sl.sendParticles(ParticleTypes.SCULK_SOUL,
                 getX(), getY() + 0.8, getZ(), 25, 0.5, 0.8, 0.5, 0.07);
         sl.sendParticles(ParticleTypes.LARGE_SMOKE,

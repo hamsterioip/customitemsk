@@ -5,6 +5,8 @@ import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.PathfinderMob;
@@ -12,6 +14,7 @@ import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.goal.WaterAvoidingRandomStrollGoal;
 import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 
@@ -54,6 +57,15 @@ public class ForestSpiritEntity extends PathfinderMob {
             ServerLevel sl = (ServerLevel) level();
             sl.sendParticles(ParticleTypes.HAPPY_VILLAGER,
                     getX(), getY() + 1.0, getZ(), 2, 0.3, 0.5, 0.3, 0.05);
+        }
+
+        // Proximity aura — the spirit's presence unsettles anyone within 6 blocks
+        if (!level().isClientSide() && lifeTicks % 20 == 0) {
+            ServerLevel sl = (ServerLevel) level();
+            for (Player p : sl.getEntitiesOfClass(Player.class, getBoundingBox().inflate(6.0))) {
+                p.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, 30, 0, false, false));
+                p.addEffect(new MobEffectInstance(MobEffects.HUNGER,   30, 0, false, false));
+            }
         }
     }
 

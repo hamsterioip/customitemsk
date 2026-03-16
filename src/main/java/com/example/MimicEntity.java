@@ -243,7 +243,7 @@ public class MimicEntity extends PathfinderMob {
                     .forEach(p -> {
                         p.addEffect(new MobEffectInstance(MobEffects.DARKNESS, 100, 0, false, false));
                         p.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, 60, 1, false, false));
-                        p.addEffect(new MobEffectInstance(MobEffects.WITHER, 40, 0, false, false)); // Added wither
+                        p.addEffect(new MobEffectInstance(MobEffects.WITHER, 200, 0, false, false));
                     });
             }
             

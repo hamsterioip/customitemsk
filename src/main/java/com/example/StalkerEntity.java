@@ -232,14 +232,21 @@ public class StalkerEntity extends PathfinderMob {
                 sl.sendParticles(ParticleTypes.LARGE_SMOKE, getX(), getY() + 1, getZ(), 10, 0.3, 0.5, 0.3, 0.05);
                 
                 teleportTo(testPos.getX() + 0.5, testPos.getY(), testPos.getZ() + 0.5);
-                
+
                 // Smoke at new position
                 sl.sendParticles(ParticleTypes.LARGE_SMOKE, getX(), getY() + 1, getZ(), 10, 0.3, 0.5, 0.3, 0.05);
-                
+
                 // Teleport sound
                 sl.playSound(null, getX(), getY(), getZ(),
                         SoundEvents.ENDERMAN_TELEPORT, SoundSource.HOSTILE, 0.8f, 0.3f);
-                
+
+                // Mark the target — they glow for 15 s so the Stalker can re-locate them
+                target.addEffect(new MobEffectInstance(MobEffects.GLOWING, 300, 0, false, false));
+                if (target instanceof ServerPlayer sp) {
+                    sp.displayClientMessage(
+                            net.minecraft.network.chat.Component.literal("§5§o...it has marked you."), true);
+                }
+
                 return;
             }
         }
