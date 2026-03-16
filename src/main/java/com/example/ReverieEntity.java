@@ -681,6 +681,10 @@ public class ReverieEntity extends PathfinderMob {
             teleportTo(dest.getX() + 0.5, dest.getY(), dest.getZ() + 0.5);
         }
 
+        // Every teleport applies the mental attack regardless of stage or timer —
+        // each relocation is a reminder that it was right there.
+        doMentalAttack(sl, tp);
+
         // Soft sound at new position — barely audible, just enough to unsettle
         sl.playSound(null, getX(), getY(), getZ(),
                 SoundEvents.AMBIENT_CAVE, SoundSource.AMBIENT, 0.15f, 0.35f);

@@ -295,12 +295,15 @@ public class ChangelingEntity extends PathfinderMob {
                     SoundEvents.ENDERMAN_TELEPORT, SoundSource.HOSTILE, 0.8f, 0.5f);
             
             teleportTo(behindX, getY(), behindZ);
-            
+
             // Particles at new location
             sl.sendParticles(ParticleTypes.LARGE_SMOKE, getX(), getY() + 1, getZ(), 15, 0.3, 0.5, 0.3, 0.05);
-            
+
             // Brief invisibility
             addEffect(new MobEffectInstance(MobEffects.INVISIBILITY, 30, 0, false, false));
+
+            // Disorienting shadow-step — the dodge itself costs the player momentum
+            target.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, 80, 0, false, false));
         }
     }
 
