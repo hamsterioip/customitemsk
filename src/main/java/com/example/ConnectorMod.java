@@ -261,16 +261,7 @@ public class ConnectorMod implements ModInitializer {
     }
 
     private String extractJsonField(String json, String fieldName) {
-        try {
-            String search = "\"" + fieldName + "\": \"";
-            int start = json.indexOf(search);
-            if (start == -1) return null;
-            start += search.length();
-            int end = json.indexOf("\"", start);
-            return (end == -1) ? null : json.substring(start, end);
-        } catch (Exception e) {
-            return null;
-        }
+        return VersionUtils.extractJsonField(json, fieldName);
     }
 
     // -------------------------------------------------------------------------
@@ -278,25 +269,7 @@ public class ConnectorMod implements ModInitializer {
     // -------------------------------------------------------------------------
 
     private boolean isNewerVersion(String remote, String local) {
-        String[] r = remote.replace("v", "").split("\\.");
-        String[] l = local.replace("v",  "").split("\\.");
-        int max = Math.max(r.length, l.length);
-        for (int i = 0; i < max; i++) {
-            int rv = i < r.length ? parseVersionPart(r[i]) : 0;
-            int lv = i < l.length ? parseVersionPart(l[i]) : 0;
-            if (rv > lv) return true;
-            if (rv < lv) return false;
-        }
-        return false;
-    }
-
-    private int parseVersionPart(String part) {
-        try {
-            String clean = part.replaceAll("[^0-9]", "");
-            return clean.isEmpty() ? 0 : Integer.parseInt(clean);
-        } catch (NumberFormatException e) {
-            return 0;
-        }
+        return VersionUtils.isNewerVersion(remote, local);
     }
 
     // -------------------------------------------------------------------------
