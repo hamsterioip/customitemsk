@@ -173,6 +173,19 @@ public class CustomItemsK implements ModInitializer {
                         .build(reverieKey));
         FabricDefaultAttributeRegistry.register(ReverieEntity.TYPE, ReverieEntity.createAttributes().build());
 
+        // Register The Lumin entity — a passive beneficial spirit
+        ResourceKey<EntityType<?>> luminKey = ResourceKey.create(
+                Registries.ENTITY_TYPE,
+                Identifier.fromNamespaceAndPath(MOD_ID, "lumin"));
+        LuminEntity.TYPE = Registry.register(
+                BuiltInRegistries.ENTITY_TYPE,
+                luminKey,
+                EntityType.Builder.<LuminEntity>of(LuminEntity::new, MobCategory.CREATURE)
+                        .sized(0.5f, 0.5f)
+                        .clientTrackingRange(24)
+                        .build(luminKey));
+        FabricDefaultAttributeRegistry.register(LuminEntity.TYPE, LuminEntity.createAttributes().build());
+
         // Register the jumpscare packet for server → client delivery
         PayloadTypeRegistry.playS2C().register(WatcherJumpscarePacket.ID, WatcherJumpscarePacket.CODEC);
         // Register The Hollow stare packet
@@ -198,6 +211,7 @@ public class CustomItemsK implements ModInitializer {
         registerInventoryPassiveBuffs();
         registerAmbientHorrorEvents();
         registerTeleportCommands();
+        registerLuminCommand();
 
         // /spawnmimic <target> <skin> — operator command to manually spawn a mimic
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
@@ -2351,5 +2365,65 @@ public class CustomItemsK implements ModInitializer {
             }
         }
         return null;
+    }
+
+    // ── Lumin ─────────────────────────────────────────────────────────────────
+
+    /**
+     * /spawnlumin [target] — operator command to spawn a Lumin near a player.
+     * Usage: /spawnlumin            (spawns near the command sender)
+     *        /spawnlumin <player>   (spawns near the specified player)
+     */
+    private void registerLuminCommand() {
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+            dispatcher.register(
+                Commands.literal("spawnlumin")
+                    .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                    // No-arg variant — spawns near the command sender
+                    .executes(ctx -> spawnLuminNear(ctx.getSource(), ctx.getSource().getPlayerOrException()))
+                    // Optional player argument
+                    .then(Commands.argument("target", EntityArgument.player())
+                        .executes(ctx -> spawnLuminNear(
+                                ctx.getSource(),
+                                EntityArgument.getPlayer(ctx, "target"))))));
+    }
+
+    private static int spawnLuminNear(CommandSourceStack source, ServerPlayer target) {
+        ServerLevel sl = (ServerLevel) target.level();
+
+        // Spawn 6–10 blocks in a random horizontal direction so it isn't on top of the player
+        double angle = sl.getRandom().nextDouble() * Math.PI * 2;
+        double dist  = 6.0 + sl.getRandom().nextDouble() * 4.0;
+        double ox    = Math.cos(angle) * dist;
+        double oz    = Math.sin(angle) * dist;
+        BlockPos base = BlockPos.containing(
+                target.getX() + ox, target.getY() + 1, target.getZ() + oz);
+
+        // Walk downward until we find a clear two-block column
+        BlockPos spawnPos = null;
+        for (int dy = 4; dy >= -4; dy--) {
+            BlockPos test = base.offset(0, dy, 0);
+            if (sl.getBlockState(test).isAir() && sl.getBlockState(test.above()).isAir()) {
+                spawnPos = test;
+                break;
+            }
+        }
+        if (spawnPos == null) {
+            source.sendFailure(Component.literal("No clear spawn position found near " + target.getName().getString()));
+            return 0;
+        }
+
+        LuminEntity lumin = new LuminEntity(LuminEntity.TYPE, sl);
+        lumin.setPos(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
+        sl.addFreshEntity(lumin);
+
+        sl.sendParticles(ParticleTypes.END_ROD,
+                lumin.getX(), lumin.getY() + 0.9, lumin.getZ(), 20, 0.4, 0.4, 0.4, 0.06);
+        sl.playSound(null, lumin.getX(), lumin.getY(), lumin.getZ(),
+                SoundEvents.AMETHYST_BLOCK_CHIME, SoundSource.NEUTRAL, 1.0f, 0.8f);
+
+        source.sendSuccess(() -> Component.literal(
+                "§bSpawned a Lumin near §f" + target.getName().getString()), true);
+        return 1;
     }
 }
