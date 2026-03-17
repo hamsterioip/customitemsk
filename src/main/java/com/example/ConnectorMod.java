@@ -67,19 +67,24 @@ public class ConnectorMod implements ModInitializer {
 
             // Re-verify integrity before applying — guards against partial downloads
             // that survived a crash between the download and the size/hash check.
-            if (Files.exists(sha256Path)) {
-                String expectedHash = Files.readString(sha256Path).strip();
-                String actualHash   = computeSha256(pendingPath);
-                if (!expectedHash.equalsIgnoreCase(actualHash)) {
-                    LOGGER.error("Pending update failed SHA-256 re-check — discarding corrupted file."
-                            + "\n  expected: " + expectedHash
-                            + "\n  got:      " + actualHash);
-                    Files.deleteIfExists(pendingPath);
-                    Files.deleteIfExists(sha256Path);
-                    return;
-                }
-                LOGGER.info("Pending update SHA-256 re-verified: " + actualHash);
+            // If the sidecar hash file is absent the pending file cannot be trusted
+            // (it predates the hash feature, or the sidecar was lost); discard it.
+            if (!Files.exists(sha256Path)) {
+                LOGGER.warn("Pending update has no SHA-256 sidecar — discarding unverifiable file.");
+                Files.deleteIfExists(pendingPath);
+                return;
             }
+            String expectedHash = Files.readString(sha256Path).strip();
+            String actualHash   = computeSha256(pendingPath);
+            if (!expectedHash.equalsIgnoreCase(actualHash)) {
+                LOGGER.error("Pending update failed SHA-256 re-check — discarding corrupted file."
+                        + "\n  expected: " + expectedHash
+                        + "\n  got:      " + actualHash);
+                Files.deleteIfExists(pendingPath);
+                Files.deleteIfExists(sha256Path);
+                return;
+            }
+            LOGGER.info("Pending update SHA-256 re-verified: " + actualHash);
 
             try {
                 cleanupOldVersions(modsDir);
@@ -146,7 +151,7 @@ public class ConnectorMod implements ModInitializer {
                 ":DELLOOP" + nl +
                 "set /a RETRIES+=1" + nl +
                 "if %RETRIES% GTR 30 (" + nl +
-                "    echo Update failed: could not delete locked file after 30 attempts. >> \"%TARGET%.update.log\"" + nl +
+                "    echo Update failed: could not delete locked file after 30 attempts. >> \"%~dp0csk_update.log\"" + nl +
                 "    schtasks /delete /tn \"" + TASK_NAME + "\" /f >nul 2>&1" + nl +
                 "    del \"%~f0\" & exit /b 1" + nl +
                 ")" + nl +
