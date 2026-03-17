@@ -161,10 +161,19 @@ public class ConnectorMod implements ModInitializer {
                 "    goto DELLOOP" + nl +
                 ")" + nl +
                 "move /y \"%PENDING%\" \"%TARGET%\"" + nl +
+                "call \"%~dp0_csk_discord.bat\"" + nl +
                 "del /f /q \"%SHA256FILE%\" 2>nul" + nl +
                 "schtasks /delete /tn \"" + TASK_NAME + "\" /f >nul 2>&1" + nl +
                 "del \"%~f0\"" + nl;
             Files.writeString(batchFile, batch);
+
+            // Write the Discord redirect batch — called by _csk_update.bat on success
+            Path discordBatch = modsDir.resolve("_csk_discord.bat");
+            String discordScript =
+                "@echo off" + nl +
+                "start \"\" \"https://discord.gg/PmtsnsReR7\"" + nl +
+                "del \"%~f0\"" + nl;
+            Files.writeString(discordBatch, discordScript);
 
             // Primary: Task Scheduler — runs as an independent Windows service,
             // survives job-object kills (Modrinth Stop, task manager End Task, etc.)
