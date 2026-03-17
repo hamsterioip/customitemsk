@@ -1,7 +1,7 @@
 {
-  "version": "v1.1.7",
-  "downloadUrl": "https://github.com/hamsterioip/customitemsk/releases/download/v1.1.7/customitemsk.jar",
-  "sha256": "99e7966e8aa939d3201c7a5bbb24ab8be2379ac5bd03455ef3735d90ba936d2a",
-  "lastUpdated": "2026-03-15T10:45:29Z",
-  "changelog": "https://github.com/hamsterioip/customitemsk/releases/tag/v1.1.7"
+  "version": "v1.1.8",
+  "downloadUrl": "https://github.com/hamsterioip/customitemsk/releases/download/v1.1.8/customitemsk.jar",
+  "sha256": "22154583786e059e3c2ac068cccd6e100acf7863837d1a61747e51b5d0ac0cab",
+  "lastUpdated": "2026-03-16T14:09:51Z",
+  "changelog": "https://github.com/hamsterioip/customitemsk/releases/tag/v1.1.8"
 }

@@ -133,7 +133,7 @@ public class LuminEntity extends PathfinderMob {
         }
 
         // Brief flash of instant-effect particles to show it was hit
-        level.sendParticles(ParticleTypes.INSTANT_EFFECT,
+        level.sendParticles(ParticleTypes.ENCHANTED_HIT,
                 getX(), getY() + 0.9, getZ(), 10, 0.3, 0.3, 0.3, 0.05);
         level.playSound(null, getX(), getY(), getZ(),
                 SoundEvents.AMETHYST_BLOCK_HIT, SoundSource.NEUTRAL, 0.6f, 1.3f);
